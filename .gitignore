@@ -1,0 +1,27 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Django
+*.log
+db.sqlite3
+media/
+staticfiles/
+
+# Secrets - never commit
+.env
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+.coverage
+htmlcov/
+
+
+#Prompt
+Prompt.md
