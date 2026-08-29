@@ -25,3 +25,6 @@ htmlcov/
 
 #Prompt
 Prompt.md
+
+#stub-gen
+.django-stub-gen

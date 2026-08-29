@@ -33,7 +33,7 @@ Never commit the real `.env`; use `.env.example` as the template.
 ## PostgreSQL
 
 ```sql
-CREATE DATABASE mimo_shop;
+CREATE DATABASE shop_db;
 ```
 
 The Django test runner needs `CREATE DATABASE` permission for the configured

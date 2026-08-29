@@ -1,4 +1,4 @@
-# Mimo Shop - Backend
+# RekabStyle - Backend
 
 Backend of an online shop built with **Django**, **Django REST Framework**, **PostgreSQL** and **uv**.
 
@@ -25,7 +25,7 @@ Requires [uv](https://docs.astral.sh/uv/) and PostgreSQL.
 
 ```bash
 # 1. Create the database (example for psql)
-CREATE DATABASE mimo_shop;
+CREATE DATABASE shop_db;
 
 # 2. Configure the environment
 cp .env.example .env     # then edit .env with real values (see docs/configuration.md)
