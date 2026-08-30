@@ -41,7 +41,7 @@ def initiate_payment(order, callback_url):
     return payment
 
 
-def verify_and_complete_payment(track_id):
+def verify_and_complete_payment(track_id, user=None):
     """Verify a payment with Zibal and, on success, mark it and the order paid.
 
     - Verification always happens server-side; frontend claims are ignored.
@@ -51,6 +51,8 @@ def verify_and_complete_payment(track_id):
     """
     payment = Payment.objects.filter(authority=track_id).order_by("-created_at").first()
     if payment is None:
+        raise PaymentError("Payment not found.")
+    if user is not None and payment.order.user_id != user.id:
         raise PaymentError("Payment not found.")
 
     if payment.status == Payment.STATUS_SUCCESS:

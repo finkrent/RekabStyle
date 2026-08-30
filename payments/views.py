@@ -117,7 +117,7 @@ class PaymentVerifyView(APIView):
                 {"detail": "track_id is required."}, status=status.HTTP_400_BAD_REQUEST
             )
         try:
-            payment = verify_and_complete_payment(str(track_id))
+            payment = verify_and_complete_payment(str(track_id), user=request.user)
         except PaymentError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except ZibalError as exc:
