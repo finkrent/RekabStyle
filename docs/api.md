@@ -4,6 +4,9 @@ Base URL: `/api/v1/`. All bodies are JSON. Authentication is by **JWT Bearer** t
 active for the browsable API). See "Authentication" below. Session clients must
 send the `X-CSRFToken` header on POST/PATCH; Bearer-token clients do not.
 
+All list endpoints are paginated (`PageNumberPagination`, 20 items per page):
+`{ "count", "next", "previous", "results": [...] }`. Use `?page=2` to navigate.
+
 ## Authentication
 
 - `verify-otp` (existing user) and `complete-registration` (sign-up) return
@@ -39,12 +42,14 @@ Public.
 { "phone_number": "09123456789", "otp": "123456" }
 ```
 
-- **Existing phone number** -> the user is logged in:
-  `200` `{ "detail", "logged_in": true, "profile_complete": false }`
+- **Existing phone number** -> the user is logged in and JWT tokens are
+  returned:
+  `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "...", "refresh": "..." }`
 - **New phone number** -> no user is created yet; the verified phone is staged
   in the session and the client must complete sign-up:
   `200` `{ "detail", "national_id_required": true }`
 - `400` invalid / expired / used OTP or no active OTP
+- `403` the account exists but is disabled (`is_active=False`)
 - `429` too many wrong attempts
 
 ### POST /api/v1/accounts/complete-registration/
@@ -56,7 +61,7 @@ created only after this step succeeds.
 { "national_id": "0012345679" }
 ```
 
-- `200` `{ "detail", "logged_in": true, "profile_complete": false }` - user
+- `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "...", "refresh": "..." }` - user
   created and logged in
 - `400` invalid national ID (checksum)
 - `409` national ID (or phone) already belongs to an account - **no user is
@@ -64,8 +69,9 @@ created only after this step succeeds.
 
 ### GET | PATCH /api/v1/accounts/profile/
 Authenticated. `PATCH` accepts `first_name`, `last_name`. `phone_number` and
-`national_id` are read-only. Addresses are listed read-only here and managed
-through the endpoints below.
+`national_id` are read-only. The response also includes a read-only
+`full_name` and the user's `addresses` (read-only, managed through the
+endpoints below).
 
 ### Addresses (authenticated, own addresses only)
 
@@ -115,6 +121,15 @@ Authenticated. Users can only access their own orders (others get `404`).
 Staff responses additionally include customer phone, national ID, first/last
 name and payment records; customer responses never include them. Both include
 the shipping address snapshot.
+
+### Order status lifecycle
+
+`pending` -> `paid` -> `processing` -> `shipped` -> `delivered`, or
+`cancelled`. Only `pending` orders can be paid. Status transitions after
+payment are managed by staff through Django Admin; the API never sets them.
+Every order object also carries a read-only `payment_status`
+(`pending` / `success` / `failed`, from the latest payment attempt; `null`
+before any payment was initiated).
 
 ## Payments
 

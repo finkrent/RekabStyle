@@ -6,6 +6,7 @@ Backend of an online shop built with **Django**, **Django REST Framework**, **Po
 - Phone number + OTP authentication (no username/password for customers)
 - Kavenegar for SMS, Zibal for payments, Django Admin for administration
 - Deliberately simple architecture: no Redis, no Celery, no Docker
+- Products can have uploaded images (Pillow, stored under `media/`)
 
 ## Project structure
 
@@ -72,6 +73,18 @@ protected request (no cookies/CSRF needed). In development you can set
 `OTP_DEBUG_RETURN_CODE=True` (with `DJANGO_DEBUG=True`) so `request-otp`
 returns the code in `debug_code` instead of sending a real SMS. See
 `docs/api.md`.
+
+## Orders and payments
+
+Customers place orders through `POST /api/v1/orders/` (requires a complete
+profile and at least one address; the address is snapshotted onto the order).
+Payments go through Zibal: `initiate` returns a gateway URL, the callback and
+`verify` endpoints confirm the payment **server-side** (idempotent, with an
+amount check), then mark the order `paid` and notify the customer and the
+administrator by SMS. Order statuses:
+`pending` -> `paid` -> `processing` -> `shipped` -> `delivered`, or `cancelled`.
+
+All list endpoints are paginated (20 items per page).
 
 ## Documentation
 

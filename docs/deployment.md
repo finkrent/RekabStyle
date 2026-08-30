@@ -15,7 +15,7 @@
    - `DJANGO_DEBUG=False`
    - `DJANGO_ALLOWED_HOSTS=your-domain.com`
    - real `DATABASE_*` credentials
-   - real `KAVENEGAR_API_KEY` and approved `KAVENEGAR_OTP_TEMPLATE`
+   - real `KAVENEGAR_API_KEY` (plain SMS is used - no approved template needed)
    - real `ZIBAL_MERCHANT` (not the sandbox value `zibal`)
    - `ZIBAL_CALLBACK_URL=https://your-domain.com/api/v1/payments/callback/`
    - administrator `ADMIN_PHONE_NUMBER`

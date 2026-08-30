@@ -19,11 +19,10 @@ Never commit the real `.env`; use `.env.example` as the template.
 | `OTP_LENGTH` | no (default `6`) | OTP code length |
 | `OTP_EXPIRE_SECONDS` | no (default `180`) | OTP validity period |
 | `OTP_COOLDOWN_SECONDS` | no (default `90`) | Delay between OTP requests for the same phone number |
-| `OTP_MAX_REQUESTS_PER_HOUR` | no (default `5`) | OTP requests allowed per phone number per hour |
+| `OTP_MAX_REQUESTS_PER_HOUR` | no (default `20`) | OTP requests allowed per phone number per hour |
 | `OTP_MAX_VERIFY_ATTEMPTS` | no (default `5`) | Wrong attempts allowed per OTP |
 | `KAVENEGAR_API_KEY` | yes | Kavenegar API key (from Kavenegar panel) |
 | `KAVENEGAR_SENDER` | no | Sender line, if your account requires one |
-| `OTP_SMS_MESSAGE` | no | Multi-line OTP SMS template; literal `\\n` becomes a newline, `{code}` and `{expire_minutes}` are substituted |
 | `ADMIN_PHONE_NUMBER` | yes | Administrator mobile that receives payment SMS (`09xxxxxxxxx`) |
 | `ZIBAL_MERCHANT` | yes | Zibal merchant code; use `zibal` for the sandbox |
 | `ZIBAL_BASE_URL` | no (default `https://gateway.zibal.ir`) | Zibal API base URL |
@@ -44,8 +43,9 @@ hard-coded.
 
 1. Register at kavenegar.com and get the API key from the panel.
 2. OTP codes are sent as plain multi-line SMS via `sms/send.json` - no
-   approved template or special Kavenegar plan is required. Customize the
-   message through `OTP_SMS_MESSAGE` if needed.
+   approved template or special Kavenegar plan is required. The OTP, order
+   confirmation and admin notification message texts live in
+   `notifications/services/sms.py`.
 
 Integration is implemented manually over the REST API in
 `notifications/services/sms.py` (endpoint `sms/send.json`) - no SDK is used.
