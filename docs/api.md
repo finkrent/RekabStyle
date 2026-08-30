@@ -90,6 +90,10 @@ Accessing another user's address returns `404`.
 - `GET /api/v1/categories/{id}/`
 - `GET /api/v1/categories/{id}/subcategories/`
 - `GET /api/v1/subcategories/` - filter: `?category=`
+- `GET /api/v1/best-sellers/` - the "Best Sellers" showcase curated by staff
+  in Django Admin (not paginated: returns a plain JSON array of product
+  objects, ordered by the admin-set position, lower first). Inactive products
+  are never exposed; a product can only be added once.
 
 ## Orders
 

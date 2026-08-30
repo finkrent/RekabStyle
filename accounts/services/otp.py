@@ -114,7 +114,15 @@ def verify_otp(phone_number, code):
         otp.save(update_fields=["attempt_count"])
 
         if not _check_hash(code, otp.code_hash):
-            raise OtpError("Invalid OTP code.", code="invalid")
+            # Raise outside the atomic block below: raising inside it would
+            # roll back the attempt-count increment, so the OTP would never
+            # actually lock after too many wrong attempts.
+            invalid_error = OtpError("Invalid OTP code.", code="invalid")
+        else:
+            invalid_error = None
+            otp.mark_used()
 
-        otp.mark_used()
+    if invalid_error is not None:
+        raise invalid_error
+
     return otp

@@ -1,5 +1,5 @@
 ﻿from django.db.models import Q
-from rest_framework import viewsets
+from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -59,3 +59,25 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
+
+
+class BestSellerViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Public 'Best Sellers' showcase (GET /api/v1/best-sellers/).
+
+    The list is curated manually by staff in Django Admin (products + a
+    position number, lower shows first). Returned flat as product objects,
+    in position order, unpaginated. Inactive products are never exposed.
+    """
+
+    serializer_class = ProductSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        # Products that have been curated as best sellers, ordered by the
+        # BestSeller position; Product instances so ProductSerializer works
+        # directly on them.
+        return (
+            Product.objects.filter(is_active=True, best_seller__isnull=False)
+            .select_related("category", "subcategory")
+            .order_by("best_seller__position", "-best_seller__created_at")
+        )

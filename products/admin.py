@@ -1,6 +1,6 @@
 ﻿from django.contrib import admin
 
-from products.models import Category, Product, Subcategory
+from products.models import BestSeller, Category, Product, Subcategory
 
 
 class SubcategoryInline(admin.TabularInline):
@@ -32,3 +32,16 @@ class ProductAdmin(admin.ModelAdmin):
     list_editable = ("price", "is_active")
     readonly_fields = ("created_at", "updated_at")
     list_select_related = ("category", "subcategory")
+
+
+@admin.register(BestSeller)
+class BestSellerAdmin(admin.ModelAdmin):
+    """Curated 'Best Sellers' showcase: staff pick existing products and
+    order them by typing a position number (lower shows first)."""
+
+    list_display = ("product", "position", "created_at")
+    list_editable = ("position",)
+    list_display_links = ("product",)
+    autocomplete_fields = ("product",)
+    ordering = ("position", "-created_at")
+    list_select_related = ("product",)

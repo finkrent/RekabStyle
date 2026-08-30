@@ -5,6 +5,7 @@ Backend of an online shop built with **Django**, **Django REST Framework**, **Po
 - API-first (REST, under `/api/v1/`), no frontend
 - Phone number + OTP authentication (no username/password for customers)
 - Kavenegar for SMS, Zibal for payments, Django Admin for administration
+- Admin-curated "Best Sellers" showcase (`GET /api/v1/best-sellers/`)
 - Deliberately simple architecture: no Redis, no Celery, no Docker
 - Products can have uploaded images (Pillow, stored under `media/`)
 
@@ -84,7 +85,10 @@ amount check), then mark the order `paid` and notify the customer and the
 administrator by SMS. Order statuses:
 `pending` -> `paid` -> `processing` -> `shipped` -> `delivered`, or `cancelled`.
 
-All list endpoints are paginated (20 items per page).
+All list endpoints are paginated (20 items per page), except the
+"Best Sellers" showcase (`GET /api/v1/best-sellers/`), which returns a plain
+array of products curated by staff in Django Admin (each entry has a position
+number; lower shows first).
 
 ## Documentation
 

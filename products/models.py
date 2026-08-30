@@ -71,3 +71,29 @@ class Product(TimestampedModel):
             raise ValidationError(
                 {"subcategory": "The subcategory must belong to the selected category."}
             )
+
+
+class BestSeller(models.Model):
+    """A product manually curated by staff for the 'Best Sellers' showcase.
+
+    No sales-count logic is involved: the administrator picks existing
+    products in Django Admin and orders them with the `position` field
+    (lower position is shown first). The storefront fetches them through
+    the public /api/v1/best-sellers/ endpoint.
+    """
+
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="best_seller",
+        verbose_name="Product",
+    )
+    position = models.PositiveSmallIntegerField("Position", default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("position", "-created_at")  # position first; ties -> newest first
+        verbose_name_plural = "best sellers"
+
+    def __str__(self):
+        return f"#{self.position} {self.product.name}"
