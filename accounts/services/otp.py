@@ -3,6 +3,7 @@ import hashlib
 import secrets
 from datetime import timedelta
 
+from django.db import transaction
 from django.conf import settings
 from django.utils import timezone
 
@@ -88,29 +89,32 @@ def verify_otp(phone_number, code):
     phone_number = normalize_phone_number(phone_number)
     max_attempts = settings.OTP["MAX_VERIFY_ATTEMPTS"]
 
-    otp = (
-        OtpCode.objects.filter(phone_number=phone_number, is_used=False)
-        .order_by("-created_at")
-        .first()
-    )
-    if otp is None:
-        raise OtpError(
-            "No active OTP found for this phone number. Please request a new one.",
-            code="not_found",
+    with transaction.atomic():
+        otp = (
+            OtpCode.objects
+            .select_for_update()
+            .filter(phone_number=phone_number, is_used=False)
+            .order_by("-created_at")
+            .first()
         )
-    if otp.is_expired:
-        raise OtpError("This OTP has expired. Please request a new one.", code="expired")
-    if otp.attempt_count >= max_attempts:
-        raise OtpError(
-            "Too many incorrect attempts. Please request a new OTP.",
-            code="too_many_attempts",
-        )
+        if otp is None:
+            raise OtpError(
+                "No active OTP found for this phone number. Please request a new one.",
+                code="not_found",
+            )
+        if otp.is_expired:
+            raise OtpError("This OTP has expired. Please request a new one.", code="expired")
+        if otp.attempt_count >= max_attempts:
+            raise OtpError(
+                "Too many incorrect attempts. Please request a new OTP.",
+                code="too_many_attempts",
+            )
 
-    otp.attempt_count += 1
-    otp.save(update_fields=["attempt_count"])
+        otp.attempt_count += 1
+        otp.save(update_fields=["attempt_count"])
 
-    if not _check_hash(code, otp.code_hash):
-        raise OtpError("Invalid OTP code.", code="invalid")
+        if not _check_hash(code, otp.code_hash):
+            raise OtpError("Invalid OTP code.", code="invalid")
 
-    otp.mark_used()
+        otp.mark_used()
     return otp
