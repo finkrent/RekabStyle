@@ -42,32 +42,21 @@ class Subcategory(TimestampedModel):
 
 
 class Product(TimestampedModel):
-    category = models.ForeignKey(
-        Category, on_delete=models.PROTECT, related_name="products", verbose_name="Category"
-    )
-    subcategory = models.ForeignKey(
-        Subcategory,
-        on_delete=models.PROTECT,
-        related_name="products",
-        null=True,
-        blank=True,
-        verbose_name="Subcategory",
-    )
-    additional_categories = models.ManyToManyField(
+    categories = models.ManyToManyField(
         Category,
         blank=True,
-        related_name="additional_products",
-        verbose_name="Additional categories",
-        help_text="Extra categories this product also belongs to (optional).",
+        related_name="products",
+        verbose_name="Categories",
+        help_text="The categories this product belongs to (a product may belong to several).",
     )
-    additional_subcategories = models.ManyToManyField(
+    subcategories = models.ManyToManyField(
         Subcategory,
         blank=True,
-        related_name="additional_products",
-        verbose_name="Additional subcategories",
+        related_name="products",
+        verbose_name="Subcategories",
         help_text=(
-            "Extra subcategories this product also belongs to (optional). "
-            "Each must belong to the product's primary or additional categories."
+            "The subcategories this product belongs to (a product may belong "
+            "to several). Each must belong to one of the product's categories."
         ),
     )
     name = models.CharField("Name", max_length=200)
@@ -84,56 +73,32 @@ class Product(TimestampedModel):
         return self.name
 
     def clean(self):
-        if self.subcategory_id and self.subcategory.category_id != self.category_id:
-            raise ValidationError(
-                {"subcategory": "The subcategory must belong to the selected category."}
-            )
         # M2M managers can only be read on saved instances; the admin form
         # passes the (not yet saved) M2M values in explicitly.
         if self.pk:
-            self.validate_category_relations(
-                self.additional_categories.all(),
-                self.additional_subcategories.all(),
-            )
+            self.validate_subcategories(self.categories.all(), self.subcategories.all())
 
-    def validate_category_relations(
-        self, additional_categories=(), additional_subcategories=()
-    ):
-        """Validate the additional category/subcategory assignments.
-
-        - The primary category must not be repeated as an additional category.
-        - Every additional subcategory must belong to the product's primary
-          category or to one of its additional categories.
+    def validate_subcategories(self, categories=(), subcategories=()):
+        """Every selected subcategory must belong to one of the product's
+        selected categories.
 
         Usable both post-save (through ``clean()``) and pre-save with explicit
         iterables (Django Admin forms), because M2M relations cannot be read
         from an unsaved instance.
         """
-        additional_categories = list(additional_categories)
-        additional_subcategories = list(additional_subcategories)
-        errors = {}
-        additional_category_ids = {category.pk for category in additional_categories}
-        if self.category_id and self.category_id in additional_category_ids:
-            errors["additional_categories"] = ValidationError(
-                "The primary category cannot be repeated as an additional category.",
-                code="duplicate_category",
+        subcategories = list(subcategories)
+        if not subcategories:
+            return
+        category_ids = {category.pk for category in categories}
+        if any(subcategory.category_id not in category_ids for subcategory in subcategories):
+            raise ValidationError(
+                {
+                    "subcategories": ValidationError(
+                        "Subcategories must belong to one of the product's categories.",
+                        code="invalid_subcategory",
+                    )
+                }
             )
-        allowed_category_ids = additional_category_ids
-        if self.category_id:
-            allowed_category_ids = additional_category_ids | {self.category_id}
-        invalid_subcategories = [
-            subcategory
-            for subcategory in additional_subcategories
-            if subcategory.category_id not in allowed_category_ids
-        ]
-        if invalid_subcategories:
-            errors["additional_subcategories"] = ValidationError(
-                "Additional subcategories must belong to the product's primary "
-                "category or to one of its additional categories.",
-                code="invalid_subcategory",
-            )
-        if errors:
-            raise ValidationError(errors)
 
 
 class BestSeller(models.Model):

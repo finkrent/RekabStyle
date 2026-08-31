@@ -19,9 +19,8 @@ PHONE = "09123456789"
 class OrderTestBase(TestCase):
     def setUp(self):
         self.category = Category.objects.create(name="General")
-        self.product = Product.objects.create(
-            name="Phone X", price=100000, category=self.category
-        )
+        self.product = Product.objects.create(name="Phone X", price=100000)
+        self.product.categories.add(self.category)
 
     def _make_complete_user(self, phone_number="09123456789", national_id=VALID_NATIONAL_ID):
         """A user whose profile passes the checkout gate, with one address."""

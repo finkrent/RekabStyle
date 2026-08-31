@@ -10,9 +10,9 @@ class SubcategoryInline(admin.TabularInline):
 
 
 class ProductAdminForm(forms.ModelForm):
-    """Validates the additional (M2M) category/subcategory assignments at
-    form time, because model-level M2M validation cannot run on unsaved
-    instances (the M2M values live in the form, not the instance yet)."""
+    """Validates the (M2M) category/subcategory assignments at form time,
+    because model-level M2M validation cannot run on unsaved instances (the
+    M2M values live in the form, not on the instance yet)."""
 
     class Meta:
         model = Product
@@ -20,10 +20,9 @@ class ProductAdminForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
-        product = self.instance
-        product.validate_category_relations(
-            cleaned_data.get("additional_categories") or (),
-            cleaned_data.get("additional_subcategories") or (),
+        self.instance.validate_subcategories(
+            cleaned_data.get("categories") or (),
+            cleaned_data.get("subcategories") or (),
         )
         return cleaned_data
 
@@ -47,13 +46,19 @@ class SubcategoryAdmin(admin.ModelAdmin):
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     form = ProductAdminForm
-    list_display = ("name", "price", "category", "subcategory", "is_active", "created_at")
-    list_filter = ("category", "is_active")
+    list_display = ("name", "price", "categories_summary", "is_active", "created_at")
+    list_filter = ("is_active",)
     search_fields = ("name", "description")
     list_editable = ("price", "is_active")
     readonly_fields = ("created_at", "updated_at")
-    list_select_related = ("category", "subcategory")
-    filter_horizontal = ("additional_categories", "additional_subcategories")
+    filter_horizontal = ("categories", "subcategories")
+
+    @admin.display(description="Categories")
+    def categories_summary(self, obj):
+        return ", ".join(category.name for category in obj.categories.all())
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("categories")
 
 
 @admin.register(BestSeller)

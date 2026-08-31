@@ -11,33 +11,24 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     """Public product catalog.
 
     Filters: ?category=<id>, ?subcategory=<id>, ?search=<text>.
-    The category/subcategory filters match both the product's primary
-    category/subcategory and any of its additional (M2M) ones.
+    The category/subcategory filters match any of the product's (many)
+    categories/subcategories.
     """
 
     serializer_class = ProductSerializer
 
     def get_queryset(self):
-        queryset = (
-            Product.objects.filter(is_active=True)
-            .select_related("category", "subcategory")
-            .prefetch_related("additional_categories", "additional_subcategories")
+        queryset = Product.objects.filter(is_active=True).prefetch_related(
+            "categories", "subcategories"
         )
         params = self.request.query_params
         category = params.get("category")
         subcategory = params.get("subcategory")
         search = params.get("search")
         if category:
-            # Matches the primary category or any of the additional ones.
-            queryset = queryset.filter(
-                Q(category_id=category) | Q(additional_categories__id=category)
-            ).distinct()
+            queryset = queryset.filter(categories__id=category).distinct()
         if subcategory:
-            # Matches the primary subcategory or any of the additional ones.
-            queryset = queryset.filter(
-                Q(subcategory_id=subcategory)
-                | Q(additional_subcategories__id=subcategory)
-            ).distinct()
+            queryset = queryset.filter(subcategories__id=subcategory).distinct()
         if search:
             queryset = queryset.filter(Q(name__icontains=search) | Q(description__icontains=search))
         return queryset
@@ -91,7 +82,6 @@ class BestSellerViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         # directly on them.
         return (
             Product.objects.filter(is_active=True, best_seller__isnull=False)
-            .select_related("category", "subcategory")
-            .prefetch_related("additional_categories", "additional_subcategories")
+            .prefetch_related("categories", "subcategories")
             .order_by("best_seller__position", "-best_seller__created_at")
         )

@@ -37,7 +37,9 @@ class PaymentTestBase(TestCase):
         self.address = Address.objects.create(
             user=self.user, address="Tehran, Iran", postal_code="1234567890"
         )
-        self.category = Category.objects.create(name="General"); self.product = Product.objects.create(name="Phone X", price=100000, category=self.category)
+        self.category = Category.objects.create(name="General")
+        self.product = Product.objects.create(name="Phone X", price=100000)
+        self.product.categories.add(self.category)
         self.order = create_order(
             self.user,
             items=[{"product": self.product, "quantity": 2}],
