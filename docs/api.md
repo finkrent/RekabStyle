@@ -84,8 +84,17 @@ Accessing another user's address returns `404`.
 
 ## Catalog (public, paginated)
 
-- `GET /api/v1/products/` - filters: `?category=`, `?subcategory=`, `?search=`
-- `GET /api/v1/products/{id}/`
+Products have a **primary** category (and optional primary subcategory), plus
+**optional additional** categories/subcategories (many-to-many, managed in
+Django Admin). The `?category=` and `?subcategory=` filters match either the
+primary or any of the additional relations.
+
+- `GET /api/v1/products/` - filters: `?category=<id>`, `?subcategory=<id>`, `?search=`
+- `GET /api/v1/products/{id}/` - each product returns, next to the primary
+  `category`/`category_name`/`subcategory`/`subcategory_name`, the read-only
+  `additional_categories` / `additional_category_names` and
+  `additional_subcategories` / `additional_subcategory_names` (JSON arrays;
+  empty when none are assigned)
 - `GET /api/v1/categories/` - includes nested subcategories
 - `GET /api/v1/categories/{id}/`
 - `GET /api/v1/categories/{id}/subcategories/`

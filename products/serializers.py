@@ -6,6 +6,14 @@ from products.models import Category, Product, Subcategory
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     subcategory_name = serializers.CharField(source="subcategory.name", read_only=True, default=None)
+    additional_categories = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    additional_category_names = serializers.SlugRelatedField(
+        many=True, read_only=True, slug_field="name", source="additional_categories"
+    )
+    additional_subcategories = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    additional_subcategory_names = serializers.SlugRelatedField(
+        many=True, read_only=True, slug_field="name", source="additional_subcategories"
+    )
 
 
     class Meta:
@@ -20,6 +28,10 @@ class ProductSerializer(serializers.ModelSerializer):
             "category_name",
             "subcategory",
             "subcategory_name",
+            "additional_categories",
+            "additional_category_names",
+            "additional_subcategories",
+            "additional_subcategory_names",
 
 
             "is_active",
