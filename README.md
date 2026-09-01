@@ -100,4 +100,6 @@ number; lower shows first).
 - `docs/api.md` - endpoint reference, OTP flow, payment flow
 - `docs/frontend.md` - **frontend developer guide**: auth flows with code,
   dev proxy setup, every endpoint, checkout/payment walkthrough
+- `docs/backend.md` - **backend developer guide**: architecture, data model,
+  auth/payment internals, settings, testing, security limitations
 - `docs/deployment.md` - production deployment checklist

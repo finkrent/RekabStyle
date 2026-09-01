@@ -467,7 +467,7 @@ Response `201` (one order):
 ```json
 {
   "id": 7,
-  "order_number": "ORD-7",
+  "order_number": "20260901-3F9A1C2D",
   "status": "pending",
   "total_price": 550000,
   "payment_status": null,
@@ -485,8 +485,8 @@ Response `201` (one order):
   product's price changes later.
 - Send **each product at most once** with a merged quantity (`2 × product 1`
   as one line, not two lines of 1). Quantities are 1–99.
-- Possible errors: `400` (incomplete profile / inactive product / empty cart),
-  `404` (unknown product id).
+- Possible errors: `400` (incomplete profile / inactive or unknown product /
+  empty cart / quantity out of range).
 
 **3. Start the payment.**
 
@@ -514,7 +514,7 @@ result page — set `FRONTEND_PAYMENT_RESULT_URL` in the backend `.env`
 (e.g. `http://localhost:5173/payment/result`). Your page receives:
 
 ```text
-/payment/result?status=paid&order_number=ORD-7&detail=Payment+successful
+/payment/result?status=paid&order_number=20260901-3F9A1C2D&detail=Payment+successful
 ```
 
 `status` is `paid` or `failed`; `order_number` is present when known. Build
@@ -543,7 +543,7 @@ Verify is **idempotent** — safe to call more than once. On success, fetch
 | `paid` | Payment verified |
 | `processing` | Being prepared (staff sets this) |
 | `shipped` / `delivered` | Fulfilment states |
-| `cancelled` | Cancelled (by staff, or automatically when a payment fails) |
+| `cancelled` | Cancelled — set by staff in Django Admin only; there is no automatic cancellation (a failed payment leaves the order `pending`, so it can be paid again) |
 
 `payment_status` on an order: `null` (never attempted), `pending`, `success`,
 `failed`. If a user retries payment, `POST /payments/initiate/` again on the
