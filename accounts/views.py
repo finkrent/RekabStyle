@@ -5,6 +5,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView as BaseTokenRefreshView
 
@@ -34,6 +35,25 @@ def _otp_error_response(exc):
     payload = {"detail": exc.message, "code": exc.code}
     payload.update(exc.extra)
     return Response(payload, status=OTP_ERROR_STATUS.get(exc.code, status.HTTP_400_BAD_REQUEST))
+
+
+def _set_refresh_cookie(response, raw_token):
+    """Deliver the refresh token as an httpOnly cookie (never readable by JS)."""
+    conf = settings.JWT_REFRESH_COOKIE
+    response.set_cookie(
+        conf["NAME"],
+        raw_token,
+        max_age=conf["MAX_AGE"],
+        path=conf["PATH"],
+        secure=conf["SECURE"],
+        httponly=conf["HTTPONLY"],
+        samesite=conf["SAMESITE"],
+    )
+
+
+def _clear_refresh_cookie(response):
+    conf = settings.JWT_REFRESH_COOKIE
+    response.delete_cookie(conf["NAME"], path=conf["PATH"], samesite=conf["SAMESITE"])
 
 
 class HasPendingSignup(permissions.BasePermission):
@@ -134,15 +154,16 @@ class VerifyOtpView(APIView):
 
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         refresh = RefreshToken.for_user(user)
-        return Response(
+        response = Response(
             {
                 "detail": "Logged in successfully.",
                 "logged_in": True,
                 "profile_complete": user.profile_is_complete,
                 "access": str(refresh.access_token),
-                "refresh": str(refresh),
             }
         )
+        _set_refresh_cookie(response, str(refresh))
+        return response
 
 
 class CompleteRegistrationView(APIView):
@@ -190,15 +211,16 @@ class CompleteRegistrationView(APIView):
         login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         request.session.pop("pending_signup_phone", None)
         refresh = RefreshToken.for_user(user)
-        return Response(
+        response = Response(
             {
                 "detail": "Registration completed. You are now logged in.",
                 "logged_in": True,
                 "profile_complete": user.profile_is_complete,
                 "access": str(refresh.access_token),
-                "refresh": str(refresh),
             }
         )
+        _set_refresh_cookie(response, str(refresh))
+        return response
 
     @staticmethod
     def _conflict(message):
@@ -239,8 +261,59 @@ class AddressDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class TokenRefreshView(BaseTokenRefreshView):
-    """POST /api/v1/accounts/token/refresh/ - exchange a refresh token
-    for a new access token. Purely token-based: no session authentication,
-    hence no CSRF requirement."""
+    """POST /api/v1/accounts/token/refresh/ - exchange the refresh-token
+    cookie for a new access token.
+
+    The refresh token arrives through the httpOnly cookie set at login (the
+    body's "refresh" field is still accepted for API clients such as
+    Postman). Refresh tokens rotate: the response sets the rotated token as
+    the new cookie and the old one is blacklisted server-side.
+    """
 
     authentication_classes = []
+
+    def post(self, request, *args, **kwargs):
+        cookie_name = settings.JWT_REFRESH_COOKIE["NAME"]
+        data = dict(request.data) if isinstance(request.data, dict) else {}
+        refresh_token = data.get("refresh") or request.COOKIES.get(cookie_name, "")
+        if not refresh_token:
+            response = Response(
+                {"detail": "Refresh token is missing.", "code": "token_not_valid"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            _clear_refresh_cookie(response)
+            return response
+        serializer = self.get_serializer(data={"refresh": refresh_token})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as exc:
+            response = Response(
+                {"detail": str(exc), "code": "token_not_valid"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+            _clear_refresh_cookie(response)
+            return response
+
+        response = Response({"access": serializer.validated_data["access"]})
+        rotated = serializer.validated_data.get("refresh")
+        if rotated:
+            _set_refresh_cookie(response, str(rotated))
+        return response
+
+
+class LogoutView(APIView):
+    """POST /api/v1/accounts/logout/ - blacklist the refresh token and
+    clear its cookie. Purely token-based: no CSRF requirement."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        raw_token = request.COOKIES.get(settings.JWT_REFRESH_COOKIE["NAME"])
+        if raw_token:
+            try:
+                RefreshToken(raw_token).blacklist()
+            except TokenError:
+                pass  # already expired/invalid - nothing left to revoke
+        response = Response({"detail": "Logged out successfully."})
+        _clear_refresh_cookie(response)
+        return response

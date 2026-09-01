@@ -63,9 +63,12 @@ requires a **national ID** (required and unique - duplicates are rejected and
 no user is created until a valid unused one is provided). Profile details
 (first/last name) and **multiple addresses** (text + postal code) are optional
 at sign-up but required before checkout; the chosen address is snapshotted
-onto each order. Authentication uses **JWT Bearer tokens** (access valid 1 day,
-refresh valid 30 days, returned by `verify-otp` / `complete-registration`),
-plus Django sessions for the browsable API and Admin. There is no username,
+onto each order. Authentication uses **JWT Bearer tokens**: the access token
+is valid 30 minutes and held in memory by the SPA, while the 30-day **refresh
+token is an httpOnly, `SameSite=Strict` cookie** scoped to
+`/api/v1/accounts/` - it is rotated on every refresh, blacklisted on reuse,
+and revoked by `POST /api/v1/accounts/logout/`. Django sessions remain for
+the browsable API and Admin. There is no username,
 email or password for customers. Staff and superusers log into Django Admin
 with a password.
 
@@ -73,7 +76,8 @@ For **Postman / API testing**, send `Authorization: Bearer <access>` on every
 protected request (no cookies/CSRF needed). In development you can set
 `OTP_DEBUG_RETURN_CODE=True` (with `DJANGO_DEBUG=True`) so `request-otp`
 returns the code in `debug_code` instead of sending a real SMS. See
-`docs/api.md`.
+`docs/api.md`. **Frontend developers:** start with `docs/frontend.md` - a
+complete integration guide (auth flows with code, every endpoint, checkout).
 
 ## Orders and payments
 
@@ -94,4 +98,6 @@ number; lower shows first).
 
 - `docs/configuration.md` - environment variables, PostgreSQL, Kavenegar, Zibal
 - `docs/api.md` - endpoint reference, OTP flow, payment flow
+- `docs/frontend.md` - **frontend developer guide**: auth flows with code,
+  dev proxy setup, every endpoint, checkout/payment walkthrough
 - `docs/deployment.md` - production deployment checklist

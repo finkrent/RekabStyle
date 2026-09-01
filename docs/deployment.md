@@ -40,7 +40,8 @@
 5. **Reverse proxy**: forward `https://your-domain.com` to `127.0.0.1:8000`,
    serve `/media/` (uploaded product images) and `/static/` from disk.
 6. **Verify**: with `DEBUG=False` the settings enforce secure session/CSRF
-   cookies; make sure TLS is actually terminated at the proxy.
+   cookies; make sure TLS is actually terminated at the proxy. The JWT refresh
+   cookie is also `Secure` when `DEBUG=False`, so HTTPS is mandatory.
 
 ## Operational notes
 
@@ -49,4 +50,7 @@
 - Payment verification is server-side and idempotent; duplicate callbacks are
   safe.
 - Payment SMS failures are logged and never block a successful payment.
+- JWT blacklist tables grow with every login and refresh; run
+  `uv run python manage.py flushexpiredtokens` periodically (e.g. a daily
+  cron job) to purge expired entries.
 - Backups: regular `pg_dump` of the database and the `media/` directory.

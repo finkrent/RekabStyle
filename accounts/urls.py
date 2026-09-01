@@ -13,6 +13,7 @@ urlpatterns = [
     ),
     path("profile/", views.ProfileView.as_view(), name="profile"),
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
+    path("logout/", views.LogoutView.as_view(), name="logout"),
     path("addresses/", views.AddressListCreateView.as_view(), name="address-list"),
     path("addresses/<int:pk>/", views.AddressDetailView.as_view(), name="address-detail"),
 ]

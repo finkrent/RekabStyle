@@ -18,6 +18,8 @@ VERIFY_OTP_URL = reverse("verify-otp")
 COMPLETE_REGISTRATION_URL = reverse("complete-registration")
 PROFILE_URL = reverse("profile")
 ADDRESS_LIST_URL = reverse("address-list")
+REFRESH_URL = reverse("token-refresh")
+LOGOUT_URL = reverse("logout")
 
 VALID_NATIONAL_ID_1 = "0012345679"
 VALID_NATIONAL_ID_2 = "0012345687"
@@ -287,28 +289,41 @@ class AddressTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 class JwtAuthTests(TestCase):
-    def _get_tokens(self):
-        """Sign in an existing user through the OTP flow and return tokens."""
+    REFRESH_COOKIE = settings.JWT_REFRESH_COOKIE["NAME"]
+
+    def _login(self):
+        """Sign in an existing user through the OTP flow and return the response."""
         User.objects.create_user(phone_number=PHONE)
         with patch(SMS_TARGET) as mock_send:
             self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
         code = mock_send.call_args[0][1]
         response = self.client.post(VERIFY_OTP_URL, {"phone_number": PHONE, "otp": code})
         self.assertEqual(response.status_code, 200)
-        return response.data["access"], response.data["refresh"]
+        return response
 
-    def test_verify_otp_returns_tokens_for_existing_user(self):
-        access, refresh = self._get_tokens()
-        self.assertTrue(access)
-        self.assertTrue(refresh)
+    def _set_refresh_cookie(self, value):
+        self.client.cookies[self.REFRESH_COOKIE] = value
+
+    def _cookie(self, response):
+        return response.cookies[self.REFRESH_COOKIE]
+
+    def test_verify_otp_returns_access_and_sets_refresh_cookie(self):
+        response = self._login()
+        self.assertIn("access", response.data)
+        self.assertNotIn("refresh", response.data)  # never exposed to JavaScript
+        cookie = self._cookie(response)
+        self.assertTrue(cookie.value)
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["samesite"], "Strict")
+        self.assertEqual(cookie["path"], "/api/v1/accounts/")
 
     def test_access_token_grants_api_access(self):
-        access, _refresh = self._get_tokens()
+        access = self._login().data["access"]
         response = self.client.get(PROFILE_URL, HTTP_AUTHORIZATION=f"Bearer {access}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["phone_number"], PHONE)
 
-    def test_complete_registration_returns_tokens(self):
+    def test_complete_registration_sets_refresh_cookie(self):
         with patch(SMS_TARGET) as mock_send:
             self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
         code = mock_send.call_args[0][1]
@@ -318,21 +333,52 @@ class JwtAuthTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("access", response.data)
-        self.assertIn("refresh", response.data)
-        response = self.client.get(
+        self.assertNotIn("refresh", response.data)
+        self.assertTrue(self._cookie(response).value)
+        profile = self.client.get(
             PROFILE_URL, HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["national_id"], VALID_NATIONAL_ID_1)
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data["national_id"], VALID_NATIONAL_ID_1)
 
-    def test_refresh_endpoint_returns_new_access_token(self):
-        _access, refresh = self._get_tokens()
-        response = self.client.post(reverse("token-refresh"), {"refresh": refresh})
+    def test_refresh_endpoint_works_with_cookie_only(self):
+        self._login()
+        response = self.client.post(REFRESH_URL, {})
         self.assertEqual(response.status_code, 200)
-        response = self.client.get(
-            PROFILE_URL, HTTP_AUTHORIZATION=f"Bearer {response.data['access']}"
-        )
+        self.assertIn("access", response.data)
+        rotated = self._cookie(response).value  # rotation sets a new cookie
+        self.assertTrue(rotated)
+        self._set_refresh_cookie(rotated)
+        second = self.client.post(REFRESH_URL, {})
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("access", second.data)
+
+    def test_old_refresh_token_blacklisted_after_rotation(self):
+        self._login()
+        old_cookie = self.client.cookies[self.REFRESH_COOKIE].value
+        response = self.client.post(REFRESH_URL, {})  # rotation blacklists the old token
         self.assertEqual(response.status_code, 200)
+        self._set_refresh_cookie(old_cookie)
+        replay = self.client.post(REFRESH_URL, {})
+        self.assertEqual(replay.status_code, 401)
+
+    def test_refresh_with_invalid_cookie_returns_401_and_clears_cookie(self):
+        self._set_refresh_cookie("not-a-token")
+        response = self.client.post(REFRESH_URL, {})
+        self.assertEqual(response.status_code, 401)
+        cookie = self._cookie(response)
+        self.assertEqual(cookie.value, "")
+        self.assertEqual(cookie["max-age"], 0)
+
+    def test_logout_blacklists_refresh_token_and_clears_cookie(self):
+        access = self._login().data["access"]
+        response = self.client.post(LOGOUT_URL, HTTP_AUTHORIZATION=f"Bearer {access}")
+        self.assertEqual(response.status_code, 200)
+        cookie = self._cookie(response)
+        self.assertEqual(cookie.value, "")
+        self.assertEqual(cookie["max-age"], 0)
+        replay = self.client.post(REFRESH_URL, {})
+        self.assertEqual(replay.status_code, 401)
 
     def test_invalid_bearer_token_rejected(self):
         response = self.client.get(PROFILE_URL, HTTP_AUTHORIZATION="Bearer bogus")

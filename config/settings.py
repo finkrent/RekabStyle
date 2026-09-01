@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "accounts",
     "products",
     "orders",
@@ -131,10 +132,24 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
-    "ROTATE_REFRESH_TOKENS": False,
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# The refresh token is delivered to the browser as an httpOnly cookie (the
+# SPA only ever holds the short-lived access token in memory). Same-domain
+# deployment: SameSite=Strict needs no CORS/CSRF juggling and blocks the
+# cookie from ever being attached to cross-site requests.
+JWT_REFRESH_COOKIE = {
+    "NAME": os.environ.get("JWT_REFRESH_COOKIE_NAME", "refresh_token"),
+    "PATH": "/api/v1/accounts/",
+    "MAX_AGE": 60 * 60 * 24 * 30,  # matches REFRESH_TOKEN_LIFETIME
+    "SECURE": not DEBUG,
+    "HTTPONLY": True,
+    "SAMESITE": "Strict",
 }
 OTP_DEBUG_RETURN_CODE = _env_bool("OTP_DEBUG_RETURN_CODE", "False")
 

@@ -28,6 +28,7 @@ Never commit the real `.env`; use `.env.example` as the template.
 | `ZIBAL_BASE_URL` | no (default `https://gateway.zibal.ir`) | Zibal API base URL |
 | `ZIBAL_CALLBACK_URL` | yes in production | Absolute URL of `/api/v1/payments/callback/` reachable by the customer browser |
 | `FRONTEND_PAYMENT_RESULT_URL` | no | If set, payment callback redirects the browser there (`?status=&order_number=&detail=`) |
+| `JWT_REFRESH_COOKIE_NAME` | no (default `refresh_token`) | Name of the httpOnly cookie that carries the JWT refresh token |
 
 ## PostgreSQL
 

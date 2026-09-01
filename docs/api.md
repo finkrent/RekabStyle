@@ -1,8 +1,11 @@
 # API Reference
 
-Base URL: `/api/v1/`. All bodies are JSON. Authentication is by **JWT Bearer** token (plus Django session cookies, still
-active for the browsable API). See "Authentication" below. Session clients must
-send the `X-CSRFToken` header on POST/PATCH; Bearer-token clients do not.
+Base URL: `/api/v1/`. All bodies are JSON. Authentication is by **JWT Bearer**
+access token; the 30-day **refresh token** is delivered as an httpOnly cookie
+(`refresh_token`, `SameSite=Strict`, `Path=/api/v1/accounts/`) and is never
+readable by JavaScript. Django session cookies remain active for the browsable
+API and Admin. Session clients must send the `X-CSRFToken` header on
+POST/PATCH; Bearer-token clients do not.
 
 All list endpoints are paginated (`PageNumberPagination`, 20 items per page):
 `{ "count", "next", "previous", "results": [...] }`. Use `?page=2` to navigate.
@@ -10,15 +13,26 @@ All list endpoints are paginated (`PageNumberPagination`, 20 items per page):
 ## Authentication
 
 - `verify-otp` (existing user) and `complete-registration` (sign-up) return
-  `access` + `refresh` tokens in the response.
-- Send the access token as header: `Authorization: Bearer <access>`. Valid 1 day.
+  `access` in the response body and set the **refresh token** as an httpOnly
+  `Set-Cookie`. The refresh token never appears in the response body.
+- Send the access token as header: `Authorization: Bearer <access>`. Valid
+  **30 minutes** - the client should refresh proactively or on 401.
+- **Refresh: `POST /api/v1/accounts/token/refresh/`** with an empty body `{}` -
+  the refresh token is read from the cookie. Refresh tokens **rotate**: the
+  response sets the rotated token as the new cookie and the previous one is
+  blacklisted server-side. Returns `401` (and clears the cookie) when the
+  refresh token is expired/invalid/blacklisted.
+- A `{"refresh": "<token>"}` request body is also accepted on the refresh
+  endpoint for API clients (e.g. Postman) that do not keep cookies.
+- **Logout: `POST /api/v1/accounts/logout/`** (Bearer required) blacklists the
+  refresh token and clears the cookie.
 - **Postman/API testing:** call `request-otp` -> `verify-otp`, copy `access`,
-  set `Authorization: Bearer <access>` on every protected request. No cookies/CSRF needed.
+  set `Authorization: Bearer <access>` on every protected request. Postman's
+  cookie jar handles refresh/logout automatically; otherwise pass
+  `{"refresh": ...}` in the body.
 - **Postman without SMS:** with `DJANGO_DEBUG=True` and
   `OTP_DEBUG_RETURN_CODE=True` (set in `.env`), `request-otp` returns the code
   in `debug_code` instead of sending a real SMS. Never enable in production.
-- Refresh: `POST /api/v1/accounts/token/refresh/` with `{"refresh": "<refresh>"}`
-  returns a new `access`. The refresh token is valid 30 days and is not rotated.
 
 ## Accounts
 
@@ -42,9 +56,9 @@ Public.
 { "phone_number": "09123456789", "otp": "123456" }
 ```
 
-- **Existing phone number** -> the user is logged in and JWT tokens are
-  returned:
-  `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "...", "refresh": "..." }`
+- **Existing phone number** -> the user is logged in; the body returns `access`
+  and the refresh token is set as an httpOnly `Set-Cookie`:
+  `200` `{ "detail", "logged_in": true, "profile_complete": <bool>, "access": "..." }` + `Set-Cookie: refresh_token=...; HttpOnly`
 - **New phone number** -> no user is created yet; the verified phone is staged
   in the session and the client must complete sign-up:
   `200` `{ "detail", "national_id_required": true }`
@@ -61,7 +75,8 @@ created only after this step succeeds.
 { "national_id": "0012345679" }
 ```
 
-- `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "...", "refresh": "..." }` - user
+- `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "..." }` +
+  refresh-token cookie (`Set-Cookie: refresh_token=...; HttpOnly`) - user
   created and logged in
 - `400` invalid national ID (checksum)
 - `409` national ID (or phone) already belongs to an account - **no user is
