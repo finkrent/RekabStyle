@@ -141,6 +141,33 @@ at purchase time and later address edits do not affect it.
 - `400` incomplete profile, no address, inactive product
 - `404` `address_id` belongs to another user
 
+### POST /api/v1/orders/custom-design/
+Authenticated. Custom-design ordering: the customer attaches **one design**
+(description + 1-3 images) to one or more products. Every line item is priced
+at the product price **plus the custom-design surcharge (30%)**.
+
+Body is **`multipart/form-data`** (not JSON):
+
+- `items` - JSON string: `'[{"product_id": 1, "quantity": 2}]'`
+- `images` - 1-3 image files (JPEG/PNG/WEBP only; <= 5 MB each; <= 6000x6000 px)
+- `description` - required, <= 2000 characters
+- `address_id` - optional; defaults to the most recently added address
+
+Image security: files are validated by **content** with Pillow (file name,
+extension and `Content-Type` header are never trusted), SVG and GIF are
+always rejected, and every image is **re-encoded server-side** before
+storage, which strips EXIF/metadata and any payload appended after the image
+data. Stored paths are random UUIDs under `designs/YYYY/MM/`. Same
+profile/address requirements as the normal checkout.
+
+- `201` order object - items carry the surcharged purchase-time prices and a
+  read-only `custom_design` object (`description`, `surcharge_percent`,
+  `images`)
+- `400` invalid image (not an image / disallowed format / too large / too
+  many pixels), 0 or more than 3 images, invalid `items` JSON, incomplete
+  profile, no address, inactive product
+- `404` `address_id` belongs to another user
+
 ### GET /api/v1/orders/{id}/
 Authenticated. Users can only access their own orders (others get `404`).
 Staff responses additionally include customer phone, national ID, first/last

@@ -177,6 +177,27 @@ ZIBAL = {
 # Optional frontend page users are redirected to after payment.
 FRONTEND_PAYMENT_RESULT_URL = os.environ.get("FRONTEND_PAYMENT_RESULT_URL", "")
 
+# --- Custom design orders ---
+CUSTOM_DESIGN = {
+    # Surcharge applied on top of each product's unit price (percent).
+    "SURCHARGE_PERCENT": _env_int("CUSTOM_DESIGN_SURCHARGE_PERCENT", 30),
+    # Uploaded design images per order.
+    "MAX_IMAGES": 3,
+    # Per-file size cap (bytes).
+    "MAX_IMAGE_BYTES": _env_int("CUSTOM_DESIGN_MAX_IMAGE_BYTES", 5 * 1024 * 1024),
+    # Per-image dimension cap (decompression-bomb guard).
+    "MAX_IMAGE_DIMENSION": 6000,
+    # Internal formats accepted after content sniffing (Pillow names).
+    # GIF/SVG intentionally excluded.
+    "ALLOWED_FORMATS": ("JPEG", "PNG", "WEBP"),
+    "DESCRIPTION_MAX_LENGTH": 2000,
+}
+
+# Multipart body limits (defense in depth; the per-image cap above is the
+# primary limit). Sized for 3 images + form fields.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+
 # --- Production security hardening ---
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

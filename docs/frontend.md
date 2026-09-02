@@ -575,6 +575,7 @@ All relative to `/api/v1/`. `PB` = Bearer required, `pub` = public.
 | `GET /best-sellers/` | pub | Curated list (**plain array**) |
 | `GET /orders/` | PB | My orders (paginated) |
 | `POST /orders/` | PB | Create order from cart: `{items:[{product_id, quantity}], address_id?}` |
+| `POST /orders/custom-design/` | PB | Custom-design order (**multipart**): `items` (JSON string), `images` (1-3 files), `description`. Every item priced **+30%** |
 | `GET /orders/{id}/` | PB | One of my orders |
 | `POST /payments/initiate/` | PB | `{order_id}` → `{track_id, payment_url, amount}` |
 | `POST /payments/verify/` | PB | `{track_id}` → confirm payment (idempotent) |
@@ -603,6 +604,7 @@ Print this. Every line here has bitten someone.
 - [ ] `404` on an order/address/payment can mean "not yours" — do not use it to probe other users' data.
 - [ ] Handle `429` on OTP endpoints with the `retry_after` countdown instead of hammering the button.
 - [ ] Redirect to Zibal with `window.location.href` — the gateway is a full-page redirect, never a fetch.
+- [ ] `custom-design` is **multipart/form-data**, not JSON: `items` is a JSON **string**, `images` are 1-3 file parts (JPEG/PNG/WEBP, <= 5 MB each). Show the surcharged `unit_price` (+30%) to the customer *before* they submit.
 - [ ] Treat the payment result redirect as untrusted; confirm via `POST /payments/verify/` before showing "payment successful".
 - [ ] The sign-up cookie flow means the API is **browser-first**. For Postman/mobile clients, `token/refresh` also accepts `{"refresh": "<token>"}` in the body — but the SPA should always use the cookie.
 

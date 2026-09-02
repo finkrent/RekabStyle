@@ -1,4 +1,7 @@
 ﻿import secrets
+from decimal import Decimal
+from pathlib import Path
+from uuid import uuid4
 
 from django.conf import settings
 from django.db import models
@@ -76,3 +79,52 @@ class OrderItem(models.Model):
     def save(self, *args, **kwargs):
         self.total_price = self.unit_price * self.quantity
         super().save(*args, **kwargs)
+
+
+def design_image_path(instance, filename):
+    """Random storage path under designs/YYYY/MM/.
+
+    The user-supplied filename and directory structure never reach the disk;
+    only the extension is kept (the extension itself is decided server-side
+    by the re-encoding step, never trusted from the client).
+    """
+    extension = Path(filename).suffix.lower() or ".png"
+    return f"designs/{timezone.now():%Y/%m}/{uuid4().hex}{extension}"
+
+
+class CustomDesign(models.Model):
+    """A customer's custom-design request attached to an order.
+
+    Created through POST /api/v1/orders/custom-design/: every line item is
+    priced at the product price plus the custom-design surcharge (30% by
+    default), and the design images + description are stored here so staff
+    know what to produce.
+    """
+
+    order = models.OneToOneField(
+        Order, on_delete=models.CASCADE, related_name="custom_design"
+    )
+    description = models.TextField("Description")
+    surcharge_percent = models.DecimalField(
+        "Surcharge %", max_digits=5, decimal_places=2, default=Decimal("30")
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Custom design for {self.order.order_number}"
+
+
+class CustomDesignImage(models.Model):
+    """One uploaded design image (1-3 per custom-design order)."""
+
+    design = models.ForeignKey(
+        CustomDesign, on_delete=models.CASCADE, related_name="images"
+    )
+    image = models.ImageField("Image", upload_to=design_image_path)
+    position = models.PositiveSmallIntegerField("Position", default=0)
+
+    class Meta:
+        ordering = ("position", "id")
+
+    def __str__(self):
+        return f"Image #{self.position} of {self.design}"

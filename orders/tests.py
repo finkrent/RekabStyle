@@ -1,19 +1,36 @@
+import json
+import shutil
+import tempfile
+from io import BytesIO
+
+from PIL import Image
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Address
-from orders.models import Order
+from orders.models import CustomDesign, CustomDesignImage, Order
 from orders.services.orders import create_order
 from products.models import Category, Product
 
 User = get_user_model()
 
 ORDER_LIST_URL = reverse("order-list")
+CUSTOM_DESIGN_URL = reverse("custom-design-order")
 
 VALID_NATIONAL_ID = "0012345679"
 VALID_NATIONAL_ID_2 = "0012345687"
 PHONE = "09123456789"
+
+
+def _image_file(fmt="PNG", size=(10, 10), name="design.png"):
+    """A real in-memory image for multipart uploads."""
+    buffer = BytesIO()
+    Image.new("RGB", size, (200, 30, 30)).save(buffer, format=fmt)
+    content_type = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[fmt]
+    return SimpleUploadedFile(name, buffer.getvalue(), content_type=content_type)
 
 
 class OrderTestBase(TestCase):
@@ -218,3 +235,216 @@ class OrderVisibilityTests(OrderTestBase):
             "customer_last_name",
         ):
             self.assertNotIn(field, response.data)
+
+
+class CustomDesignOrderTests(OrderTestBase):
+    """POST /api/v1/orders/custom-design/ - surcharge pricing + upload security."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Keep uploaded test files out of the real media root and clean up.
+        cls._media_root = tempfile.mkdtemp(prefix="mimo-test-media-")
+        cls._media_override = override_settings(MEDIA_ROOT=cls._media_root)
+        cls._media_override.enable()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._media_override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+        super().tearDownClass()
+
+    def _design_payload(self, products, quantities=None, images=None,
+                        description="Print my logo, matte finish", address_id=None):
+        quantities = quantities or [1] * len(products)
+        data = {
+            "items": json.dumps(
+                [
+                    {"product_id": product.pk, "quantity": quantity}
+                    for product, quantity in zip(products, quantities)
+                ]
+            ),
+            "description": description,
+        }
+        if images is not None:
+            data["images"] = images
+        if address_id:
+            data["address_id"] = address_id
+        return data
+
+    def test_custom_design_order_applies_surcharge(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload(
+                [self.product], [2], [_image_file()], address_id=address.pk
+            ),
+        )
+        self.assertEqual(response.status_code, 201)
+        # 100000 + 30% = 130000 per unit; x2 = 260000
+        self.assertEqual(response.data["items"][0]["unit_price"], "130000")
+        self.assertEqual(response.data["total_price"], "260000")
+        design = response.data["custom_design"]
+        self.assertEqual(design["description"], "Print my logo, matte finish")
+        self.assertEqual(design["surcharge_percent"], "30.00")
+        self.assertEqual(len(design["images"]), 1)
+        order = Order.objects.get(pk=response.data["id"])
+        image = order.custom_design.images.get(position=0)
+        # Random server-generated path; user-supplied name never reaches disk.
+        self.assertTrue(image.image.name.startswith("designs/"))
+        self.assertTrue(image.image.name.endswith(".png"))
+
+    def test_multiple_products_and_images(self):
+        user, _ = self._make_complete_user()
+        other = Product.objects.create(name="Mug", price=50000)
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload(
+                [self.product, other],
+                [1, 3],
+                [_image_file(), _image_file(), _image_file()],
+            ),
+        )
+        self.assertEqual(response.status_code, 201)
+        # 130000 + (50000 * 1.3 * 3 = 195000) = 325000
+        self.assertEqual(response.data["total_price"], "325000")
+        self.assertEqual(len(response.data["custom_design"]["images"]), 3)
+
+    def test_normal_order_response_has_no_custom_design(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.data["custom_design"])
+
+    def test_requires_authentication(self):
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload([self.product], images=[_image_file()]),
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_rejects_missing_images(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL, self._design_payload([self.product], images=None)
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("images", response.data)
+
+    def test_rejects_more_than_three_images(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload(
+                [self.product], images=[_image_file() for _ in range(4)]
+            ),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("images", response.data)
+
+    def test_rejects_non_image_content(self):
+        """A text file renamed to .png is rejected by content sniffing."""
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        fake = SimpleUploadedFile("design.png", b"definitely not an image", content_type="image/png")
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload([self.product], images=[fake]),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_rejects_svg_content(self):
+        """SVG is an XSS vector and must never pass the format allowlist."""
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        svg = SimpleUploadedFile(
+            "design.svg",
+            b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+            content_type="image/svg+xml",
+        )
+        response = self.client.post(
+            CUSTOM_DESIGN_URL, self._design_payload([self.product], images=[svg])
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_rejects_oversized_image(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        limit = {"CUSTOM_DESIGN": {**settings.CUSTOM_DESIGN, "MAX_IMAGE_BYTES": 10}}
+        with override_settings(**limit):
+            response = self.client.post(
+                CUSTOM_DESIGN_URL,
+                self._design_payload([self.product], images=[_image_file()]),
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_rejects_oversized_dimensions(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        limit = {"CUSTOM_DESIGN": {**settings.CUSTOM_DESIGN, "MAX_IMAGE_DIMENSION": 50}}
+        with override_settings(**limit):
+            response = self.client.post(
+                CUSTOM_DESIGN_URL,
+                self._design_payload(
+                    [self.product], images=[_image_file(size=(100, 100))]
+                ),
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+
+    def test_rejects_incomplete_profile(self):
+        user = User.objects.create_user(phone_number=PHONE, national_id=VALID_NATIONAL_ID)
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload([self.product], images=[_image_file()]),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_overlong_description(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload(
+                [self.product],
+                images=[_image_file()],
+                description="x" * (settings.CUSTOM_DESIGN["DESCRIPTION_MAX_LENGTH"] + 1),
+            ),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("description", response.data)
+
+    def test_rejects_invalid_items_json(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            {"items": "not-json", "images": [_image_file()], "description": "ok"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items", response.data)
+
+    def test_inactive_product_rejected(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        self.product.is_active = False
+        self.product.save()
+        response = self.client.post(
+            CUSTOM_DESIGN_URL,
+            self._design_payload([self.product], images=[_image_file()]),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
