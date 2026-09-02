@@ -7,7 +7,7 @@ from payments.models import Payment
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
-    readonly_fields = ("product_name", "unit_price", "total_price")
+    readonly_fields = ("product_name", "unit_price", "surcharge_percent", "total_price")
 
 
 class CustomDesignInline(admin.TabularInline):
@@ -17,7 +17,7 @@ class CustomDesignInline(admin.TabularInline):
     model = CustomDesign
     extra = 0
     max_num = 1
-    readonly_fields = ("surcharge_percent", "created_at")
+    readonly_fields = ("surcharge_percent", "status", "created_at")
 
 
 class PaymentInline(admin.StackedInline):
@@ -59,7 +59,8 @@ class CustomDesignImageInline(admin.TabularInline):
 
 @admin.register(CustomDesign)
 class CustomDesignAdmin(admin.ModelAdmin):
-    list_display = ("order", "surcharge_percent", "created_at")
+    list_display = ("order", "status", "surcharge_percent", "created_at")
+    list_filter = ("status", "created_at")
     search_fields = ("order__order_number", "order__user__phone_number")
     readonly_fields = ("order", "surcharge_percent", "created_at")
     inlines = [CustomDesignImageInline]

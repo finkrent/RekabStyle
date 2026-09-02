@@ -271,22 +271,24 @@ is enforced three ways: a cheap pre-check, a re-check inside
    address edits never affect placed orders.
 5. `OrderError` → 400 `{"detail": ...}`.
 
-Custom-design orders: `POST /api/v1/orders/custom-design/`
-(`orders/views.CustomDesignOrderCreateView` +
-`orders/services/orders.create_custom_design_order`) accepts
-`multipart/form-data` (`items` as a JSON string — multipart has no list
-type — plus 1-3 `images`, `description`, optional `address_id`). Every item
-is priced at `price × (1 + CUSTOM_DESIGN["SURCHARGE_PERCENT"]/100)` (30% by
-default, rounded to whole Toman), and a `CustomDesign` row with
-`CustomDesignImage` rows (random UUID paths under `designs/YYYY/MM/`) is
-attached to the order. Images are validated by **content** in
-`orders/services/design_uploads.validate_and_reencode`: per-file size cap,
-full Pillow decode (rejects renamed non-images and polyglots), JPEG/PNG/WEBP
-allowlist (SVG/GIF can never pass), a dimension cap against decompression
-bombs, and a final Pillow **re-encode** that strips EXIF/metadata and any
-bytes appended after the image stream. `JSONParser` is intentionally not
-enabled on this view: designs must arrive as real file parts, never as
-base64 inside JSON bodies.
+Custom design (checkout checkbox): `OrderCreateSerializer` accepts both
+`application/json` (plain orders) and `multipart/form-data`; when the
+customer checks "Custom Design" on the order page, the multipart body carries
+`custom_design_product_ids` (JSON string; must be a subset of the submitted
+`items`), `custom_design_description` and 1-3 `images` — validated
+all-or-nothing. `create_order(user, items, address, design=None)` then prices
+each selected item at
+`price × (1 + CUSTOM_DESIGN["SURCHARGE_PERCENT"]/100)` (30% default, rounded
+to whole Toman), freezes `surcharge_percent` onto each `OrderItem`, and in
+the same transaction creates the `CustomDesign` (description, surcharge,
+`status` field reserved for the future designer-review workflow) with its
+`CustomDesignImage` rows (random UUID paths under `designs/YYYY/MM/`) and
+M2M links to the customized order items. Images are validated by **content**
+in `orders/services/design_uploads.validate_and_reencode`: per-file size
+cap, full Pillow decode (rejects renamed non-images and polyglots),
+JPEG/PNG/WEBP allowlist (SVG/GIF can never pass), a dimension cap against
+decompression bombs, and a final Pillow **re-encode** that strips
+EXIF/metadata and any bytes appended after the image stream.
 
 Read paths: customers see only their own orders (`OrderSerializer`: items,
 `payment_status` from the latest payment, no customer block); staff see all

@@ -61,13 +61,21 @@ class Order(models.Model):
 
 
 class OrderItem(models.Model):
-    """A line item that preserves the product name and price at purchase time."""
+    """A line item that preserves the product name and price at purchase time.
+
+    ``surcharge_percent`` freezes the custom-design surcharge that applied to
+    this line at purchase time (0 for regular items), so the snapshot stays
+    correct even if the global surcharge setting changes later.
+    """
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="order_items")
     product_name = models.CharField("Product name", max_length=200)
     unit_price = models.DecimalField("Unit price (Toman)", max_digits=12, decimal_places=0)
     quantity = models.PositiveIntegerField("Quantity", default=1)
+    surcharge_percent = models.DecimalField(
+        "Custom-design surcharge %", max_digits=5, decimal_places=2, default=Decimal("0")
+    )
     total_price = models.DecimalField("Total price (Toman)", max_digits=14, decimal_places=0)
 
     class Meta:
@@ -95,18 +103,46 @@ def design_image_path(instance, filename):
 class CustomDesign(models.Model):
     """A customer's custom-design request attached to an order.
 
-    Created through POST /api/v1/orders/custom-design/: every line item is
-    priced at the product price plus the custom-design surcharge (30% by
-    default), and the design images + description are stored here so staff
-    know what to produce.
+    Created at checkout through POST /api/v1/orders/ (the customer checks
+    "Custom Design" on the order page, picks some of his order items, and
+    supplies a description + 1-3 images). Selected line items are priced at
+    the product price plus ``surcharge_percent`` (30% by default) and the
+    images + description are stored here so staff know what to produce.
+
+    ``status`` exists for the future designer-review workflow (Pending ->
+    In Review -> Approved/Rejected -> Completed); nothing sets it yet besides
+    the default.
     """
+
+    STATUS_PENDING = "pending"
+    STATUS_IN_REVIEW = "in_review"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_COMPLETED = "completed"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_IN_REVIEW, "In Review"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_COMPLETED, "Completed"),
+    ]
 
     order = models.OneToOneField(
         Order, on_delete=models.CASCADE, related_name="custom_design"
     )
+    order_items = models.ManyToManyField(
+        OrderItem,
+        related_name="custom_designs",
+        verbose_name="Customized order items",
+        help_text="The order items this design applies to (each carries the surcharge).",
+    )
     description = models.TextField("Description")
     surcharge_percent = models.DecimalField(
         "Surcharge %", max_digits=5, decimal_places=2, default=Decimal("30")
+    )
+    status = models.CharField(
+        "Status", max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

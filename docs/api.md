@@ -125,6 +125,8 @@ Authenticated. Normal users see only their own orders; staff see all.
 Authenticated. Requires a complete profile (national ID, first name, last name)
 and at least one address - otherwise `400`.
 
+Plain orders (JSON body):
+
 ```json
 {
   "items": [ { "product_id": 1, "quantity": 2 } ],
@@ -132,40 +134,42 @@ and at least one address - otherwise `400`.
 }
 ```
 
-`address_id` is optional; when omitted the most recently added address is
-used. The chosen address (text + postal code) is **snapshotted onto the order**
-at purchase time and later address edits do not affect it.
+**Custom Design** (the checkbox on the checkout page) uses a
+**`multipart/form-data`** body instead, because the design images must arrive
+as file parts:
 
-- `201` order object (order number, status `pending`, items with purchase-time
-  prices, shipping address snapshot, total)
-- `400` incomplete profile, no address, inactive product
-- `404` `address_id` belongs to another user
+| Field | Type | Notes |
+| --- | --- | --- |
+| `items` | JSON string | `'[{"product_id": 1, "quantity": 2}]'` |
+| `address_id` | optional | same as in the JSON body |
+| `custom_design_product_ids` | JSON string | which submitted items are custom, e.g. `'[1, 3]'` - must be a subset of `items` |
+| `custom_design_description` | string | required when ids are present, <= 2000 chars |
+| `images` | 1-3 file parts | required when ids are present; JPEG/PNG/WEBP only, <= 5 MB each, <= 6000x6000 px |
 
-### POST /api/v1/orders/custom-design/
-Authenticated. Custom-design ordering: the customer attaches **one design**
-(description + 1-3 images) to one or more products. Every line item is priced
-at the product price **plus the custom-design surcharge (30%)**.
-
-Body is **`multipart/form-data`** (not JSON):
-
-- `items` - JSON string: `'[{"product_id": 1, "quantity": 2}]'`
-- `images` - 1-3 image files (JPEG/PNG/WEBP only; <= 5 MB each; <= 6000x6000 px)
-- `description` - required, <= 2000 characters
-- `address_id` - optional; defaults to the most recently added address
+All-or-nothing: when any custom-design field is sent, the complete set is
+required; images/description without a selection are a `400`. Every selected
+item is priced at **+30%** (the surcharge is frozen onto each order item and
+onto the design); unselected items keep their catalog price.
 
 Image security: files are validated by **content** with Pillow (file name,
 extension and `Content-Type` header are never trusted), SVG and GIF are
 always rejected, and every image is **re-encoded server-side** before
 storage, which strips EXIF/metadata and any payload appended after the image
-data. Stored paths are random UUIDs under `designs/YYYY/MM/`. Same
-profile/address requirements as the normal checkout.
+data. Stored paths are random UUIDs under `designs/YYYY/MM/`.
 
-- `201` order object - items carry the surcharged purchase-time prices and a
-  read-only `custom_design` object (`description`, `surcharge_percent`,
+`address_id` is optional; when omitted the most recently added address is
+used. The chosen address (text + postal code) is **snapshotted onto the order**
+at purchase time and later address edits do not affect it.
+
+- `201` order object (order number, status `pending`, items with purchase-time
+  prices and per-item `surcharge_percent`, shipping address snapshot, total,
+  plus a `custom_design` block when the checkbox was used: `description`,
+  `surcharge_percent`, `status`, `order_items` (ids of the customized items),
   `images`)
-- `400` invalid image (not an image / disallowed format / too large / too
-  many pixels), 0 or more than 3 images, invalid `items` JSON, incomplete
-  profile, no address, inactive product
+- `400` incomplete profile, no address, inactive product, invalid image
+  (not an image / disallowed format / too large / too many pixels), more than
+  3 images, incomplete custom-design field set, `custom_design_product_ids`
+  not a subset of `items`
 - `404` `address_id` belongs to another user
 
 ### GET /api/v1/orders/{id}/

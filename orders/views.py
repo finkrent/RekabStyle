@@ -1,19 +1,17 @@
 ﻿from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, parsers, permissions, status
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
 from accounts.models import Address
 from orders.models import Order
 from orders.serializers import (
     AdminOrderSerializer,
-    CustomDesignOrderCreateSerializer,
     OrderCreateSerializer,
     OrderSerializer,
 )
 from orders.services.design_uploads import ImageValidationError, validate_and_reencode
-from orders.services.orders import OrderError, create_custom_design_order, create_order
+from orders.services.orders import OrderError, create_order
 
 User = get_user_model()
 
@@ -33,7 +31,12 @@ def resolve_address(request, address_id):
 
 
 class OrderListCreateView(generics.ListCreateAPIView):
-    """GET: own orders (all orders for staff) / POST: place an order."""
+    """GET: own orders (all orders for staff) / POST: place an order.
+
+    POST accepts `application/json` for plain orders and
+    `multipart/form-data` when the "Custom Design" checkbox is used on the
+    checkout page (the design images must arrive as file parts).
+    """
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -53,50 +56,9 @@ class OrderListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         address = resolve_address(request, serializer.validated_data.get("address_id"))
         try:
-            order = create_order(request.user, serializer.validated_data["items"], address)
-        except OrderError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        output = AdminOrderSerializer if request.user.is_staff else OrderSerializer
-        return Response(
-            output(order, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
-        )
-
-
-class CustomDesignOrderCreateView(APIView):
-    """POST /api/v1/orders/custom-design/ - place a custom-design order.
-
-    multipart/form-data:
-    - items: JSON string, e.g. '[{"product_id": 1, "quantity": 2}]'
-    - images: 1-3 image files (JPEG/PNG/WEBP, <= 5 MB, <= 6000x6000 px,
-      validated by content and re-encoded server-side before storage)
-    - description: what should be printed/produced (<= 2000 chars)
-    - address_id: optional, defaults to the most recently added address
-
-    Every line item is priced at the product price plus the custom-design
-    surcharge (30% by default).
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-    # JSONParser intentionally excluded: the design images must arrive as
-    # multipart file parts, never as base64 inside JSON bodies.
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
-
-    def post(self, request):
-        serializer = CustomDesignOrderCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        address = resolve_address(request, serializer.validated_data.get("address_id"))
-        try:
-            images = [
-                validate_and_reencode(image)
-                for image in serializer.validated_data["images"]
-            ]
-            order = create_custom_design_order(
-                request.user,
-                serializer.validated_data["items"],
-                address,
-                serializer.validated_data["description"],
-                images,
+            design = self._design_from(serializer.validated_data)
+            order = create_order(
+                request.user, serializer.validated_data["items"], address, design=design
             )
         except ImageValidationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -107,6 +69,25 @@ class CustomDesignOrderCreateView(APIView):
             output(order, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _design_from(validated_data):
+        """The custom-design payload for the service layer, or None.
+
+        The serializer's cross-field validation guarantees that whenever
+        `custom_design_product_ids` is set, description and images are
+        present too.
+        """
+        product_ids = validated_data.get("custom_design_product_ids")
+        if not product_ids:
+            return None
+        return {
+            "product_ids": product_ids,
+            "description": validated_data["custom_design_description"],
+            "images": [
+                validate_and_reencode(image) for image in validated_data["images"]
+            ],
+        }
 
 
 class OrderDetailView(generics.RetrieveAPIView):

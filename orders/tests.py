@@ -11,14 +11,13 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Address
-from orders.models import CustomDesign, CustomDesignImage, Order
+from orders.models import Order
 from orders.services.orders import create_order
 from products.models import Category, Product
 
 User = get_user_model()
 
 ORDER_LIST_URL = reverse("order-list")
-CUSTOM_DESIGN_URL = reverse("custom-design-order")
 
 VALID_NATIONAL_ID = "0012345679"
 VALID_NATIONAL_ID_2 = "0012345687"
@@ -237,8 +236,15 @@ class OrderVisibilityTests(OrderTestBase):
             self.assertNotIn(field, response.data)
 
 
-class CustomDesignOrderTests(OrderTestBase):
-    """POST /api/v1/orders/custom-design/ - surcharge pricing + upload security."""
+class CheckoutCustomDesignTests(OrderTestBase):
+    """POST /api/v1/orders/ with the "Custom Design" checkbox flow.
+
+    The checkbox lives on the checkout page: when checked, the customer picks
+    some of the submitted items for the custom-design list, writes a
+    description and uploads 1-3 images. Selected items are priced +30%; the
+    rest stay at the catalog price. Everything lands in one request, so the
+    price snapshot is correct from the start.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -254,8 +260,8 @@ class CustomDesignOrderTests(OrderTestBase):
         shutil.rmtree(cls._media_root, ignore_errors=True)
         super().tearDownClass()
 
-    def _design_payload(self, products, quantities=None, images=None,
-                        description="Print my logo, matte finish", address_id=None):
+    def _checkout_payload(self, products, quantities=None, custom_product_ids=None,
+                          description=None, images=None, address_id=None):
         quantities = quantities or [1] * len(products)
         data = {
             "items": json.dumps(
@@ -264,30 +270,45 @@ class CustomDesignOrderTests(OrderTestBase):
                     for product, quantity in zip(products, quantities)
                 ]
             ),
-            "description": description,
         }
+        if custom_product_ids is not None:
+            data["custom_design_product_ids"] = json.dumps(custom_product_ids)
+        if description is not None:
+            data["custom_design_description"] = description
         if images is not None:
             data["images"] = images
         if address_id:
             data["address_id"] = address_id
         return data
 
-    def test_custom_design_order_applies_surcharge(self):
+    def test_surcharge_applies_only_to_selected_items(self):
         user, address = self._make_complete_user()
+        other = Product.objects.create(name="Mug", price=50000)
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload(
-                [self.product], [2], [_image_file()], address_id=address.pk
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product, other],
+                [2, 1],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo, matte finish",
+                images=[_image_file()],
+                address_id=address.pk,
             ),
         )
         self.assertEqual(response.status_code, 201)
-        # 100000 + 30% = 130000 per unit; x2 = 260000
-        self.assertEqual(response.data["items"][0]["unit_price"], "130000")
-        self.assertEqual(response.data["total_price"], "260000")
+        items = response.data["items"]
+        # Phone X is custom: 100000 + 30% = 130000 (x2); Mug stays 50000.
+        self.assertEqual(items[0]["unit_price"], "130000")
+        self.assertEqual(items[0]["surcharge_percent"], "30.00")
+        self.assertEqual(items[1]["unit_price"], "50000")
+        self.assertEqual(items[1]["surcharge_percent"], "0.00")
+        self.assertEqual(response.data["total_price"], "310000")
         design = response.data["custom_design"]
         self.assertEqual(design["description"], "Print my logo, matte finish")
         self.assertEqual(design["surcharge_percent"], "30.00")
+        self.assertEqual(design["status"], "pending")
+        self.assertEqual(design["order_items"], [items[0]["id"]])
         self.assertEqual(len(design["images"]), 1)
         order = Order.objects.get(pk=response.data["id"])
         image = order.custom_design.images.get(position=0)
@@ -295,24 +316,20 @@ class CustomDesignOrderTests(OrderTestBase):
         self.assertTrue(image.image.name.startswith("designs/"))
         self.assertTrue(image.image.name.endswith(".png"))
 
-    def test_multiple_products_and_images(self):
-        user, _ = self._make_complete_user()
-        other = Product.objects.create(name="Mug", price=50000)
+    def test_multipart_plain_order_without_design(self):
+        """Multipart body without design fields behaves like a plain order."""
+        user, address = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload(
-                [self.product, other],
-                [1, 3],
-                [_image_file(), _image_file(), _image_file()],
-            ),
+            ORDER_LIST_URL,
+            self._checkout_payload([self.product], [2], address_id=address.pk),
         )
         self.assertEqual(response.status_code, 201)
-        # 130000 + (50000 * 1.3 * 3 = 195000) = 325000
-        self.assertEqual(response.data["total_price"], "325000")
-        self.assertEqual(len(response.data["custom_design"]["images"]), 3)
+        self.assertEqual(response.data["total_price"], "200000")
+        self.assertIsNone(response.data["custom_design"])
+        self.assertEqual(response.data["items"][0]["surcharge_percent"], "0.00")
 
-    def test_normal_order_response_has_no_custom_design(self):
+    def test_json_plain_order_response_has_no_custom_design(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
@@ -323,29 +340,105 @@ class CustomDesignOrderTests(OrderTestBase):
         self.assertEqual(response.status_code, 201)
         self.assertIsNone(response.data["custom_design"])
 
-    def test_requires_authentication(self):
-        response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload([self.product], images=[_image_file()]),
-        )
-        self.assertEqual(response.status_code, 401)
-
-    def test_rejects_missing_images(self):
+    def test_all_items_custom(self):
         user, _ = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL, self._design_payload([self.product], images=None)
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                [2],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[_image_file()],
+            ),
+        )
+        self.assertEqual(response.status_code, 201)
+        # 100000 * 1.3 = 130000 x2 = 260000
+        self.assertEqual(response.data["total_price"], "260000")
+        self.assertEqual(len(response.data["custom_design"]["order_items"]), 1)
+
+    def test_design_fields_without_selection_rejected(self):
+        """Images/description without a selection are a 400 (no silent no-op)."""
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            self._checkout_payload([self.product], images=[_image_file()]),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("custom_design_product_ids", response.data)
+        self.assertFalse(Order.objects.exists())
+
+    def test_selection_requires_description(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                images=[_image_file()],
+            ),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("custom_design_description", response.data)
+        self.assertFalse(Order.objects.exists())
+
+    def test_selection_requires_images(self):
+        user, _ = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+            ),
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("images", response.data)
+        self.assertFalse(Order.objects.exists())
+
+    def test_custom_ids_must_be_subset_of_items(self):
+        user, _ = self._make_complete_user()
+        other = Product.objects.create(name="Mug", price=50000)
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk, other.pk],
+                description="Print my logo",
+                images=[_image_file()],
+            ),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("custom_design_product_ids", response.data)
+        self.assertFalse(Order.objects.exists())
+
+    def test_requires_authentication(self):
+        response = self.client.post(
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[_image_file()],
+            ),
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_rejects_more_than_three_images(self):
         user, _ = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload(
-                [self.product], images=[_image_file() for _ in range(4)]
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[_image_file() for _ in range(4)],
             ),
         )
         self.assertEqual(response.status_code, 400)
@@ -357,8 +450,13 @@ class CustomDesignOrderTests(OrderTestBase):
         self.client.force_login(user)
         fake = SimpleUploadedFile("design.png", b"definitely not an image", content_type="image/png")
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload([self.product], images=[fake]),
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[fake],
+            ),
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.exists())
@@ -373,7 +471,13 @@ class CustomDesignOrderTests(OrderTestBase):
             content_type="image/svg+xml",
         )
         response = self.client.post(
-            CUSTOM_DESIGN_URL, self._design_payload([self.product], images=[svg])
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[svg],
+            ),
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.exists())
@@ -384,8 +488,13 @@ class CustomDesignOrderTests(OrderTestBase):
         limit = {"CUSTOM_DESIGN": {**settings.CUSTOM_DESIGN, "MAX_IMAGE_BYTES": 10}}
         with override_settings(**limit):
             response = self.client.post(
-                CUSTOM_DESIGN_URL,
-                self._design_payload([self.product], images=[_image_file()]),
+                ORDER_LIST_URL,
+                self._checkout_payload(
+                    [self.product],
+                    custom_product_ids=[self.product.pk],
+                    description="Print my logo",
+                    images=[_image_file()],
+                ),
             )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.exists())
@@ -396,9 +505,12 @@ class CustomDesignOrderTests(OrderTestBase):
         limit = {"CUSTOM_DESIGN": {**settings.CUSTOM_DESIGN, "MAX_IMAGE_DIMENSION": 50}}
         with override_settings(**limit):
             response = self.client.post(
-                CUSTOM_DESIGN_URL,
-                self._design_payload(
-                    [self.product], images=[_image_file(size=(100, 100))]
+                ORDER_LIST_URL,
+                self._checkout_payload(
+                    [self.product],
+                    custom_product_ids=[self.product.pk],
+                    description="Print my logo",
+                    images=[_image_file(size=(100, 100))],
                 ),
             )
         self.assertEqual(response.status_code, 400)
@@ -408,8 +520,13 @@ class CustomDesignOrderTests(OrderTestBase):
         user = User.objects.create_user(phone_number=PHONE, national_id=VALID_NATIONAL_ID)
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload([self.product], images=[_image_file()]),
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[_image_file()],
+            ),
         )
         self.assertEqual(response.status_code, 400)
 
@@ -417,22 +534,28 @@ class CustomDesignOrderTests(OrderTestBase):
         user, _ = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload(
+            ORDER_LIST_URL,
+            self._checkout_payload(
                 [self.product],
-                images=[_image_file()],
+                custom_product_ids=[self.product.pk],
                 description="x" * (settings.CUSTOM_DESIGN["DESCRIPTION_MAX_LENGTH"] + 1),
+                images=[_image_file()],
             ),
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("description", response.data)
+        self.assertIn("custom_design_description", response.data)
 
     def test_rejects_invalid_items_json(self):
         user, _ = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            {"items": "not-json", "images": [_image_file()], "description": "ok"},
+            ORDER_LIST_URL,
+            {
+                "items": "not-json",
+                "custom_design_product_ids": json.dumps([1]),
+                "custom_design_description": "ok",
+                "images": [_image_file()],
+            },
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("items", response.data)
@@ -443,8 +566,13 @@ class CustomDesignOrderTests(OrderTestBase):
         self.product.is_active = False
         self.product.save()
         response = self.client.post(
-            CUSTOM_DESIGN_URL,
-            self._design_payload([self.product], images=[_image_file()]),
+            ORDER_LIST_URL,
+            self._checkout_payload(
+                [self.product],
+                custom_product_ids=[self.product.pk],
+                description="Print my logo",
+                images=[_image_file()],
+            ),
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.exists())

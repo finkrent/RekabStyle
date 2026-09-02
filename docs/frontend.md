@@ -488,6 +488,33 @@ Response `201` (one order):
 - Possible errors: `400` (incomplete profile / inactive or unknown product /
   empty cart / quantity out of range).
 
+**2b. "Custom Design" checkbox (optional).** When the customer checks it on
+the checkout page, the design section appears (description + 1-3 images +
+an item picker over the submitted items). Then send `multipart/form-data`
+instead of JSON:
+
+```js
+const form = new FormData();
+form.append("items", JSON.stringify([
+  { product_id: 1, quantity: 2 },
+  { product_id: 4, quantity: 1 },
+]));
+form.append("address_id", "3");
+form.append("custom_design_product_ids", JSON.stringify([1])); // subset of items
+form.append("custom_design_description", "Print my logo on the front");
+form.append("images", file1); // 1-3 files: JPEG/PNG/WEBP, <= 5 MB each
+await fetch("/api/v1/orders/", { method: "POST", body: form, ...auth });
+```
+
+- Backend prices every selected item **+30%**; mirror that in your client-side
+  totals and mark selected rows visually before submitting.
+- The response's `items[].unit_price` already includes the surcharge, and the
+  `custom_design` block carries `description`, `surcharge_percent`, `status`
+  and `order_items` (the ids of the customized items).
+- Validation is server-side and all-or-nothing: `custom_design_product_ids`
+  must be a subset of `items`, and description + 1-3 images are required
+  together with the ids (sending design fields without a selection is a `400`).
+
 **3. Start the payment.**
 
 ```js
@@ -574,8 +601,7 @@ All relative to `/api/v1/`. `PB` = Bearer required, `pub` = public.
 | `GET /subcategories/?category=` | pub | Subcategories |
 | `GET /best-sellers/` | pub | Curated list (**plain array**) |
 | `GET /orders/` | PB | My orders (paginated) |
-| `POST /orders/` | PB | Create order from cart: `{items:[{product_id, quantity}], address_id?}` |
-| `POST /orders/custom-design/` | PB | Custom-design order (**multipart**): `items` (JSON string), `images` (1-3 files), `description`. Every item priced **+30%** |
+| `POST /orders/` | PB | Create order from cart: `{items:[{product_id, quantity}], address_id?}` — or **multipart** with `custom_design_product_ids` + `custom_design_description` + 1-3 `images` for the Custom-Design checkbox (+30% on selected items) |
 | `GET /orders/{id}/` | PB | One of my orders |
 | `POST /payments/initiate/` | PB | `{order_id}` → `{track_id, payment_url, amount}` |
 | `POST /payments/verify/` | PB | `{track_id}` → confirm payment (idempotent) |
@@ -604,7 +630,7 @@ Print this. Every line here has bitten someone.
 - [ ] `404` on an order/address/payment can mean "not yours" — do not use it to probe other users' data.
 - [ ] Handle `429` on OTP endpoints with the `retry_after` countdown instead of hammering the button.
 - [ ] Redirect to Zibal with `window.location.href` — the gateway is a full-page redirect, never a fetch.
-- [ ] `custom-design` is **multipart/form-data**, not JSON: `items` is a JSON **string**, `images` are 1-3 file parts (JPEG/PNG/WEBP, <= 5 MB each). Show the surcharged `unit_price` (+30%) to the customer *before* they submit.
+- [ ] `POST /orders/` Custom Design is **multipart/form-data**, not JSON: `items` and `custom_design_product_ids` are JSON **strings**, `images` are 1-3 file parts (JPEG/PNG/WEBP, <= 5 MB each) and must be sent **together** with a description. Selected items cost **+30%** — show that in the totals before the customer submits.
 - [ ] Treat the payment result redirect as untrusted; confirm via `POST /payments/verify/` before showing "payment successful".
 - [ ] The sign-up cookie flow means the API is **browser-first**. For Postman/mobile clients, `token/refresh` also accepts `{"refresh": "<token>"}` in the body — but the SPA should always use the cookie.
 
