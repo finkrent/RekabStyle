@@ -1,25 +1,15 @@
-﻿# Deployment
+# Deployment Guide
 
-## Requirements
+Deploy on Linux with PostgreSQL, a Python WSGI server, and a reverse proxy.
+The project does not include Docker, Redis, Celery, or Gunicorn as a dependency.
 
-- A Linux server (any modest VPS is enough - the stack has no extra infrastructure)
-- PostgreSQL
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- A reverse proxy (nginx/caddy) for TLS termination
+## Deploy
 
-## Checklist
-
-1. **Code**: clone the repository on the server.
-2. **Environment**: create `.env` from `.env.example` with production values:
-   - strong `DJANGO_SECRET_KEY`
-   - `DJANGO_DEBUG=False`
-   - `DJANGO_ALLOWED_HOSTS=your-domain.com`
-   - real `DATABASE_*` credentials
-   - real `KAVENEGAR_API_KEY` (plain SMS is used - no approved template needed)
-   - real `ZIBAL_MERCHANT` (not the sandbox value `zibal`)
-   - `ZIBAL_CALLBACK_URL=https://your-domain.com/api/v1/payments/callback/`
-   - administrator `ADMIN_PHONE_NUMBER`
-3. **Install & migrate**:
+1. Install Python 3.12+, PostgreSQL, `uv`, and a TLS-terminating proxy.
+2. Create a production `.env` with a strong secret, `DJANGO_DEBUG=False`,
+   production hosts, database credentials, the real Zibal merchant, and the
+   Kavenegar key. Set a public `ZIBAL_CALLBACK_URL`.
+3. Initialize the application:
 
    ```bash
    uv sync
@@ -28,29 +18,32 @@
    uv run python manage.py createsuperuser
    ```
 
-4. **Run the app** with any WSGI server, e.g. gunicorn (installed separately on
-   the server, not part of the project dependencies):
+4. Install a WSGI server separately and run, for example:
 
    ```bash
    uv run gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3
    ```
 
-   Keep it alive with systemd.
+5. Proxy HTTPS traffic to Django. Serve `/static/` from `STATIC_ROOT` and
+   `/media/` from `MEDIA_ROOT`, including `media/designs/` custom-design images.
+6. Forward `X-Forwarded-Proto`. With debug disabled, Django secures session,
+   CSRF, and refresh cookies.
 
-5. **Reverse proxy**: forward `https://your-domain.com` to `127.0.0.1:8000`,
-   serve `/media/` (uploaded product images) and `/static/` from disk.
-6. **Verify**: with `DEBUG=False` the settings enforce secure session/CSRF
-   cookies; make sure TLS is actually terminated at the proxy. The JWT refresh
-   cookie is also `Secure` when `DEBUG=False`, so HTTPS is mandatory.
+## Verify and maintain
 
-## Operational notes
+Test OTP, profile completion, order creation, payment verification, callback
+redirects, and Admin login. Keep database and `media/` backups together because
+orders reference uploaded files. Payment verification is server-side and
+idempotent; SMS failures do not roll back a successful payment.
 
-- OTP rate limiting/cooldown is stored in PostgreSQL (`accounts_otrcode`); no
-  extra services are needed.
-- Payment verification is server-side and idempotent; duplicate callbacks are
-  safe.
-- Payment SMS failures are logged and never block a successful payment.
-- JWT blacklist tables grow with every login and refresh; run
-  `uv run python manage.py flushexpiredtokens` periodically (e.g. a daily
-  cron job) to purge expired entries.
-- Backups: regular `pg_dump` of the database and the `media/` directory.
+Customer payment SMS uses Kavenegar. Administrator helpers currently print their
+selected messages. The optional `ADMIN_PHONE_NUMBER` is not required at runtime.
+
+Schedule expired-token cleanup:
+
+```bash
+uv run python manage.py flushexpiredtokens
+```
+
+Expired `OtpCode` rows have no automatic cleanup, so add a periodic database
+cleanup policy. Monitor logs, failed payments, database growth, and media health.

@@ -101,6 +101,11 @@ def _send_payment_success_sms(payment):
     except Exception:
         logger.exception("Customer payment SMS failed for order %s", order.order_number)
     try:
-        sms.send_order_paid_sms_to_admin(order.order_number, customer_phone, order.total_price)
+        admin_sms = (
+            sms.send_custom_order_paid_sms_to_admin
+            if getattr(order, "custom_design", None)
+            else sms.send_order_paid_sms_to_admin
+        )
+        admin_sms(order.order_number, customer_phone, order.total_price)
     except Exception:
         logger.exception("Admin payment SMS failed for order %s", order.order_number)

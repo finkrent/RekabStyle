@@ -1,77 +1,56 @@
-# Configuration
+# Configuration Reference
 
-All sensitive configuration lives in environment variables, loaded from a
-`.env` file in the project root by `config/settings.py` (python-dotenv).
-Never commit the real `.env`; use `.env.example` as the template.
+`config/settings.py` loads `.env` from the project root. Copy `.env.example` to
+`.env`; never commit real credentials.
 
 ## Environment variables
 
-| Variable | Required | Description |
+| Variable | Default / requirement | Purpose |
 | --- | --- | --- |
-| `DJANGO_SECRET_KEY` | yes | Long random string (`python -c "import secrets; print(secrets.token_urlsafe(64))"`) |
-| `DJANGO_DEBUG` | no (default `False`) | `True` only for development |
-| `DJANGO_ALLOWED_HOSTS` | yes in production | Comma-separated host names |
-| `DATABASE_NAME` | yes | PostgreSQL database name |
-| `DATABASE_USER` | yes | PostgreSQL user |
-| `DATABASE_PASSWORD` | yes | PostgreSQL password |
-| `DATABASE_HOST` | no (default `localhost`) | PostgreSQL host |
-| `DATABASE_PORT` | no (default `5432`) | PostgreSQL port |
-| `OTP_LENGTH` | no (default `6`) | OTP code length |
-| `OTP_EXPIRE_SECONDS` | no (default `180`) | OTP validity period |
-| `OTP_COOLDOWN_SECONDS` | no (default `90`) | Delay between OTP requests for the same phone number |
-| `OTP_MAX_REQUESTS_PER_HOUR` | no (default `20`) | OTP requests allowed per phone number per hour |
-| `OTP_MAX_VERIFY_ATTEMPTS` | no (default `5`) | Wrong attempts allowed per OTP |
-| `KAVENEGAR_API_KEY` | yes | Kavenegar API key (from Kavenegar panel) |
-| `KAVENEGAR_SENDER` | no | Sender line, if your account requires one |
-| `ADMIN_PHONE_NUMBER` | yes | Administrator mobile that receives payment SMS (`09xxxxxxxxx`) |
-| `ZIBAL_MERCHANT` | yes | Zibal merchant code; use `zibal` for the sandbox |
-| `ZIBAL_BASE_URL` | no (default `https://gateway.zibal.ir`) | Zibal API base URL |
-| `ZIBAL_CALLBACK_URL` | yes in production | Absolute URL of `/api/v1/payments/callback/` reachable by the customer browser |
-| `FRONTEND_PAYMENT_RESULT_URL` | no | If set, payment callback redirects the browser there (`?status=&order_number=&detail=`) |
-| `JWT_REFRESH_COOKIE_NAME` | no (default `refresh_token`) | Name of the httpOnly cookie that carries the JWT refresh token |
+| `DJANGO_SECRET_KEY` | Required | Django signing key; startup fails without it |
+| `DJANGO_DEBUG` | `False` | Development debug mode |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated hosts |
+| `DATABASE_NAME` | Required operationally | PostgreSQL database |
+| `DATABASE_USER` | Required operationally | PostgreSQL user |
+| `DATABASE_PASSWORD` | Required operationally | PostgreSQL password |
+| `DATABASE_HOST` | `localhost` | PostgreSQL host |
+| `DATABASE_PORT` | `5432` | PostgreSQL port |
+| `OTP_LENGTH` | `6` | OTP length |
+| `OTP_EXPIRE_SECONDS` | `180` | OTP lifetime |
+| `OTP_COOLDOWN_SECONDS` | `90` | Per-phone cooldown |
+| `OTP_MAX_REQUESTS_PER_HOUR` | `20` | Per-phone hourly limit |
+| `OTP_MAX_VERIFY_ATTEMPTS` | `5` | Failed attempts per OTP |
+| `OTP_DEBUG_RETURN_CODE` | `False` | Development-only code echo; requires debug |
+| `KAVENEGAR_API_KEY` | Required for real SMS | Kavenegar API key |
+| `KAVENEGAR_SENDER` | Empty | Optional sender number |
+| `ADMIN_PHONE_NUMBER` | Empty | Admin notification target; empty skips it |
+| `ZIBAL_MERCHANT` | `zibal` | Zibal merchant; `zibal` is sandbox |
+| `ZIBAL_BASE_URL` | `https://gateway.zibal.ir` | Zibal API base URL |
+| `ZIBAL_CALLBACK_URL` | Empty | Public callback URL; request URL is fallback |
+| `FRONTEND_PAYMENT_RESULT_URL` | Empty | Optional payment result redirect |
+| `JWT_REFRESH_COOKIE_NAME` | `refresh_token` | Refresh-cookie name |
+| `CUSTOM_DESIGN_SURCHARGE_PERCENT` | `30` | Custom-item surcharge |
+| `CUSTOM_DESIGN_MAX_IMAGE_BYTES` | `5242880` | Maximum bytes per image |
 
-## PostgreSQL
+Fixed custom-design limits are three images, 6000 by 6000 pixels, JPEG/PNG/WEBP
+content, and a 2000-character description. Total multipart upload limits are
+12 MiB. Administrator payment helpers currently print messages rather than
+calling Kavenegar.
+
+## Browser security
+
+CORS and CSRF trusted origins are hard-coded to `http://localhost:3000` and
+`http://127.0.0.1:3000`; credentials are allowed. Other origins require a
+settings change. The refresh cookie is httpOnly, `SameSite=Strict`, scoped to
+`/api/v1/accounts/`, and `Secure` when debug is disabled.
+
+## Database and providers
 
 ```sql
 CREATE DATABASE shop_db;
 ```
 
-The Django test runner needs `CREATE DATABASE` permission for the configured
-user. Connection values are read from `DATABASE_*` variables only - nothing is
-hard-coded.
-
-## Kavenegar
-
-1. Register at kavenegar.com and get the API key from the panel.
-2. OTP codes are sent as plain multi-line SMS via `sms/send.json` - no
-   approved template or special Kavenegar plan is required. The OTP, order
-   confirmation and admin notification message texts live in
-   `notifications/services/sms.py`.
-
-Integration is implemented manually over the REST API in
-`notifications/services/sms.py` (endpoint `sms/send.json`) - no SDK is used.
-
-## Zibal
-
-Zibal integration follows the official IPG API documentation
-(<https://help.zibal.ir/ipg/>, OpenAPI spec at
-`https://api.zibal.ir/static/helpdocs/ipg.json`) and is implemented in
-`payments/services/zibal.py` with `requests` - no SDK.
-
-- Sandbox: set `ZIBAL_MERCHANT=zibal` (payments can be completed with Zibal test cards).
-- Production: set your real merchant code.
-- **Amounts are sent in Rial**, per the official API. The project stores money
-  in Toman and converts automatically (Rial = Toman x 10) at request time; the
-  gateway-returned Rial amount is compared against the order after conversion.
-- The customer's **national ID is sent as `nationalCode`** (optional per the
-  docs): Zibal rejects the transaction if the paying card's owner does not
-  match the account's national ID.
-- `ZIBAL_CALLBACK_URL` must be the public URL of the callback endpoint; Zibal
-  redirects the customer's browser there (`?trackId=&success=&status=&orderId=`)
-  and the backend then verifies the transaction **server-side** via `POST /v1/verify`
-  (success = result `100`; `201` = already verified, treated as idempotent success).
-- Payment page: `GET https://gateway.zibal.ir/start/{trackId}`.
-- Result codes are documented in the official tables; common ones (102 merchant
-  not found, 103/104 inactive/invalid merchant, 105 amount < 1,000 Rial,
-  106 invalid callbackUrl, 113 amount over limit, 114 invalid national code,
-  202 not paid) are mapped to friendly messages in `zibal.py`.
+Kavenegar and Zibal are integrated directly with `requests`, without SDKs.
+Kavenegar uses `sms/send.json`; Zibal receives Rial while the application stores
+Toman and performs conversion only at the gateway boundary. Production callbacks
+should use an absolute public HTTPS URL.

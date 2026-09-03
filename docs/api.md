@@ -1,222 +1,102 @@
 # API Reference
 
-Base URL: `/api/v1/`. All bodies are JSON. Authentication is by **JWT Bearer**
-access token; the 30-day **refresh token** is delivered as an httpOnly cookie
-(`refresh_token`, `SameSite=Strict`, `Path=/api/v1/accounts/`) and is never
-readable by JavaScript. Django session cookies remain active for the browsable
-API and Admin. Session clients must send the `X-CSRFToken` header on
-POST/PATCH; Bearer-token clients do not.
+Base URL: `/api/v1/`. Most requests and responses use JSON. Custom-design order
+creation uses `multipart/form-data`; payment callbacks may redirect the browser.
 
-All list endpoints are paginated (`PageNumberPagination`, 20 items per page):
-`{ "count", "next", "previous", "results": [...] }`. Use `?page=2` to navigate.
+## Conventions
+
+- Lists use `{ "count", "next", "previous", "results" }` with 20 results per page.
+  `GET /best-sellers/` returns an unpaginated array.
+- Protected endpoints use `Authorization: Bearer <access>`.
+- Refresh tokens rotate in an httpOnly, `SameSite=Strict` cookie named
+  `refresh_token` by default, scoped to `/api/v1/accounts/`.
+- Money is Toman. DRF serializes Decimal values as strings, such as `"250000"`.
+- Customer resources are owner-scoped; another user's resource returns `404`.
+- Errors use `{ "detail": "..." }` or DRF field-error objects.
 
 ## Authentication
 
-- `verify-otp` (existing user) and `complete-registration` (sign-up) return
-  `access` in the response body and set the **refresh token** as an httpOnly
-  `Set-Cookie`. The refresh token never appears in the response body.
-- Send the access token as header: `Authorization: Bearer <access>`. Valid
-  **30 minutes** - the client should refresh proactively or on 401.
-- **Refresh: `POST /api/v1/accounts/token/refresh/`** with an empty body `{}` -
-  the refresh token is read from the cookie. Refresh tokens **rotate**: the
-  response sets the rotated token as the new cookie and the previous one is
-  blacklisted server-side. Returns `401` (and clears the cookie) when the
-  refresh token is expired/invalid/blacklisted.
-- A `{"refresh": "<token>"}` request body is also accepted on the refresh
-  endpoint for API clients (e.g. Postman) that do not keep cookies.
-- **Logout: `POST /api/v1/accounts/logout/`** (Bearer required) blacklists the
-  refresh token and clears the cookie.
-- **Postman/API testing:** call `request-otp` -> `verify-otp`, copy `access`,
-  set `Authorization: Bearer <access>` on every protected request. Postman's
-  cookie jar handles refresh/logout automatically; otherwise pass
-  `{"refresh": ...}` in the body.
-- **Postman without SMS:** with `DJANGO_DEBUG=True` and
-  `OTP_DEBUG_RETURN_CODE=True` (set in `.env`), `request-otp` returns the code
-  in `debug_code` instead of sending a real SMS. Never enable in production.
+`POST /accounts/request-otp/` is public and accepts
+`{ "phone_number": "09123456789" }`. It returns `200` with an expiry, `400`
+for invalid input, `429` for cooldown or hourly limits, and `503` for SMS failure.
 
-## Accounts
+`POST /accounts/verify-otp/` accepts the phone and OTP. Existing users receive
+`access`, `logged_in`, `profile_complete`, and the refresh cookie. New phones
+receive `national_id_required: true`; the verified phone is staged in the session.
 
-### POST /api/v1/accounts/request-otp/
-Public. Rate limited (90s cooldown per phone number + hourly cap). Used for
-both sign-in and sign-up.
+`POST /accounts/complete-registration/` accepts `{ "national_id": "..." }` in
+that same browser session. It returns `200` and creates the user, `400` for an
+invalid checksum, and `409` for a duplicate phone or national ID.
 
-```json
-{ "phone_number": "09123456789" }
-```
+`POST /accounts/token/refresh/` accepts `{}` with the cookie or
+`{ "refresh": "<token>" }` for clients without cookies. It returns a new access
+token and rotated cookie. Invalid tokens return `401` and clear the cookie.
 
-- `200` `{ "detail": "OTP sent successfully.", "expires_in": 180 }`
-- `400` invalid phone number
-- `429` cooldown / hourly limit exceeded (`{ "detail", "code", "retry_after" }`)
-- `503` SMS provider failure
+`POST /accounts/logout/` requires Bearer authentication and blacklists the
+refresh token.
 
-### POST /api/v1/accounts/verify-otp/
-Public.
+## Profile and addresses
 
-```json
-{ "phone_number": "09123456789", "otp": "123456" }
-```
+- `GET|PATCH /accounts/profile/`
+- `GET|POST /accounts/addresses/`
+- `GET|PATCH|DELETE /accounts/addresses/{id}/`
 
-- **Existing phone number** -> the user is logged in; the body returns `access`
-  and the refresh token is set as an httpOnly `Set-Cookie`:
-  `200` `{ "detail", "logged_in": true, "profile_complete": <bool>, "access": "..." }` + `Set-Cookie: refresh_token=...; HttpOnly`
-- **New phone number** -> no user is created yet; the verified phone is staged
-  in the session and the client must complete sign-up:
-  `200` `{ "detail", "national_id_required": true }`
-- `400` invalid / expired / used OTP or no active OTP
-- `403` the account exists but is disabled (`is_active=False`)
-- `429` too many wrong attempts
+Profile patches accept `first_name` and `last_name`. A complete profile has a
+national ID, both names, and at least one address. Address creation accepts
+`{ "address": "...", "postal_code": "1234567890" }`; postal codes must have
+exactly ten digits.
 
-### POST /api/v1/accounts/complete-registration/
-Public, but requires a session that verified an OTP for a not-yet-registered
-phone (`403` otherwise). Required and unique national ID; the user row is
-created only after this step succeeds.
+## Catalog
 
-```json
-{ "national_id": "0012345679" }
-```
-
-- `200` `{ "detail", "logged_in": true, "profile_complete": false, "access": "..." }` +
-  refresh-token cookie (`Set-Cookie: refresh_token=...; HttpOnly`) - user
-  created and logged in
-- `400` invalid national ID (checksum)
-- `409` national ID (or phone) already belongs to an account - **no user is
-  created**
-
-### GET | PATCH /api/v1/accounts/profile/
-Authenticated. `PATCH` accepts `first_name`, `last_name`. `phone_number` and
-`national_id` are read-only. The response also includes a read-only
-`full_name` and the user's `addresses` (read-only, managed through the
-endpoints below).
-
-### Addresses (authenticated, own addresses only)
-
-- `GET /api/v1/accounts/addresses/` - paginated list
-- `POST /api/v1/accounts/addresses/` - `{ "address": "...", "postal_code": "1234567890" }`
-- `GET | PATCH | DELETE /api/v1/accounts/addresses/{id}/`
-
-A user may store multiple addresses; `400` on invalid postal code (10 digits).
-Accessing another user's address returns `404`.
-
-## Catalog (public, paginated)
-
-Products belong to **many** categories and subcategories (many-to-many,
-managed in Django Admin). The `?category=` and `?subcategory=` filters match
-any of the product's categories/subcategories.
-
-- `GET /api/v1/products/` - filters: `?category=<id>`, `?subcategory=<id>`, `?search=`
-- `GET /api/v1/products/{id}/` - each product returns the read-only
-  `categories` / `category_names` and `subcategories` / `subcategory_names`
-  (JSON arrays; empty when none are assigned)
-- `GET /api/v1/categories/` - includes nested subcategories
-- `GET /api/v1/categories/{id}/`
-- `GET /api/v1/categories/{id}/subcategories/`
-- `GET /api/v1/subcategories/` - filter: `?category=`
-- `GET /api/v1/best-sellers/` - the "Best Sellers" showcase curated by staff
-  in Django Admin (not paginated: returns a plain JSON array of product
-  objects, ordered by the admin-set position, lower first). Inactive products
-  are never exposed; a product can only be added once.
+Public endpoints are `GET /products/`, `GET /products/{id}/`,
+`GET /categories/`, `GET /categories/{id}/`,
+`GET /categories/{id}/subcategories/`, `GET /subcategories/`, and
+`GET /best-sellers/`. Product filters are `?category=<numeric-id>`,
+`?subcategory=<numeric-id>`, and `?search=<text>`; search checks name and
+description. Only active products are public.
 
 ## Orders
 
-### GET /api/v1/orders/
-Authenticated. Normal users see only their own orders; staff see all.
+`GET /orders/` is authenticated and returns the customer's orders, or all orders
+for staff. `GET /orders/{id}/` returns one owned order; staff also receive
+customer details and payment records.
 
-### POST /api/v1/orders/
-Authenticated. Requires a complete profile (national ID, first name, last name)
-and at least one address - otherwise `400`.
-
-Plain orders (JSON body):
+`POST /orders/` requires a complete profile and address. A normal request is:
 
 ```json
-{
-  "items": [ { "product_id": 1, "quantity": 2 } ],
-  "address_id": 3
-}
+{"items":[{"product_id":1,"quantity":2}],"address_id":3}
 ```
 
-**Custom Design** (the checkbox on the checkout page) uses a
-**`multipart/form-data`** body instead, because the design images must arrive
-as file parts:
+`address_id` is optional and defaults to the newest address. Prices and the
+shipping address are snapshotted. Custom design requires multipart fields:
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `items` | JSON string | `'[{"product_id": 1, "quantity": 2}]'` |
-| `address_id` | optional | same as in the JSON body |
-| `custom_design_product_ids` | JSON string | which submitted items are custom, e.g. `'[1, 3]'` - must be a subset of `items` |
-| `custom_design_description` | string | required when ids are present, <= 2000 chars |
-| `images` | 1-3 file parts | required when ids are present; JPEG/PNG/WEBP only, <= 5 MB each, <= 6000x6000 px |
+| Field | Requirement |
+| --- | --- |
+| `items` | JSON string of submitted items |
+| `address_id` | Optional address ID |
+| `custom_design_product_ids` | JSON string, subset of submitted products |
+| `custom_design_description` | Required with selection, maximum 2000 characters |
+| `images` | One to three JPEG, PNG, or WEBP files, maximum 5 MiB each |
 
-All-or-nothing: when any custom-design field is sent, the complete set is
-required; images/description without a selection are a `400`. Every selected
-item is priced at **+30%** (the surcharge is frozen onto each order item and
-onto the design); unselected items keep their catalog price.
+Design fields are all-or-nothing. Images are checked by content, limited to
+6000 by 6000 pixels, and re-encoded before storage. Selected items receive the
+configured surcharge, 30 percent by default. The response is `201`; invalid
+input returns `400`, and a foreign address returns `404`.
 
-Image security: files are validated by **content** with Pillow (file name,
-extension and `Content-Type` header are never trusted), SVG and GIF are
-always rejected, and every image is **re-encoded server-side** before
-storage, which strips EXIF/metadata and any payload appended after the image
-data. Stored paths are random UUIDs under `designs/YYYY/MM/`.
-
-`address_id` is optional; when omitted the most recently added address is
-used. The chosen address (text + postal code) is **snapshotted onto the order**
-at purchase time and later address edits do not affect it.
-
-- `201` order object (order number, status `pending`, items with purchase-time
-  prices and per-item `surcharge_percent`, shipping address snapshot, total,
-  plus a `custom_design` block when the checkbox was used: `description`,
-  `surcharge_percent`, `status`, `order_items` (ids of the customized items),
-  `images`)
-- `400` incomplete profile, no address, inactive product, invalid image
-  (not an image / disallowed format / too large / too many pixels), more than
-  3 images, incomplete custom-design field set, `custom_design_product_ids`
-  not a subset of `items`
-- `404` `address_id` belongs to another user
-
-### GET /api/v1/orders/{id}/
-Authenticated. Users can only access their own orders (others get `404`).
-Staff responses additionally include customer phone, national ID, first/last
-name and payment records; customer responses never include them. Both include
-the shipping address snapshot.
-
-### Order status lifecycle
-
-`pending` -> `paid` -> `processing` -> `shipped` -> `delivered`, or
-`cancelled`. Only `pending` orders can be paid. Status transitions after
-payment are managed by staff through Django Admin; the API never sets them.
-Every order object also carries a read-only `payment_status`
-(`pending` / `success` / `failed`, from the latest payment attempt; `null`
-before any payment was initiated).
+Order statuses are `pending`, `paid`, `processing`, `shipped`, `delivered`, and
+`cancelled`. Only pending orders can be paid; staff manage later transitions in
+Django Admin.
 
 ## Payments
 
-### POST /api/v1/payments/initiate/
-Authenticated, own pending order.
+`POST /payments/initiate/` requires `{ "order_id": 1 }` for an owned pending
+order. It returns `track_id`, `payment_url`, and a Toman `amount` string. Zibal
+receives the amount in Rial.
 
-```json
-{ "order_id": 1 }
-```
+`GET /payments/callback/?trackId=<id>&success=<value>` is called by Zibal. The
+backend always verifies server-side and does not trust the query flag. It returns
+JSON or redirects to `FRONTEND_PAYMENT_RESULT_URL`.
 
-- `201` `{ "detail", "track_id", "payment_url", "amount" }` - redirect the
-  customer to `payment_url` (Zibal). `amount` is in Toman; Zibal
-  internally receives it in Rial (converted automatically).
-- `400` order already paid / wrong status; `404` not your order; `502` gateway error
-
-### GET /api/v1/payments/callback/?trackId=...&success=1&status=...
-Called by Zibal (browser redirect). Verifies the payment **server-side**, marks
-payment + order paid in one transaction, sends SMS to customer and
-administrator. Returns JSON or redirects to `FRONTEND_PAYMENT_RESULT_URL`.
-
-### POST /api/v1/payments/verify/
-Authenticated, idempotent.
-
-```json
-{ "track_id": "123456789" }
-```
-
-- `200` `{ "detail", "order_number", "order_status", "payment_status" }`
-- `400` unknown track ID, failed payment, amount mismatch
-
-## Error format
-
-DRF default JSON errors (`{ "detail": "..." }` or field errors); no stack
-traces or internal details are exposed.
+`POST /payments/verify/` accepts `{ "track_id": "123456789" }`, verifies with
+Zibal, checks the exact amount, and completes the payment idempotently. Unknown,
+failed, or mismatched payments return `400`.

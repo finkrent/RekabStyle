@@ -233,9 +233,9 @@ class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
 
+
     def get_object(self):
         return self.request.user
-
 
 class AddressListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/v1/accounts/addresses/ - manage the user's addresses."""

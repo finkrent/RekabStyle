@@ -110,4 +110,27 @@ def send_order_paid_sms_to_admin(order_number, customer_phone, total_price):
         برای مشاهده جزئیات بیشتر وارد پنل مدیریت شوید.
         """
     ).strip()
-    return send_sms(admin_phone, message)
+    # return send_sms(admin_phone, message)
+    print(message)
+
+
+def send_custom_order_paid_sms_to_admin(order_number, customer_phone, total_price):
+    """Notify the site administrator about a new successful payment."""
+    admin_phone = settings.ADMIN_PHONE_NUMBER
+    if not admin_phone:
+        logger.warning("ADMIN_PHONE_NUMBER is not configured; skipping admin SMS.")
+        return None
+    message = dedent(
+        f"""
+        مدیر محترم،
+        یک سفارش با طرح سفارشی و شناسه:
+        {order_number}
+        و قیمت:
+        {total_price}
+        ثبت شد.
+
+        برای مشاهده جزئیات بیشتر وارد پنل مدیریت شوید.
+        """
+    ).strip()
+    # return send_sms(admin_phone, message)
+    print(message)

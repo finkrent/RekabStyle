@@ -232,6 +232,33 @@ class ProfileTests(TestCase):
         self.assertEqual(self.user.phone_number, PHONE)
         self.assertEqual(self.user.national_id, VALID_NATIONAL_ID_1)
 
+    def test_get_profile_returns_profile_complete(self):
+        response = self.client.get(PROFILE_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["profile_complete"])
+
+        Address.objects.create(
+            user=self.user, address="Tehran, Vanak St. 1", postal_code=1234567890
+        )
+        self.user.first_name = "Ali"
+        self.user.last_name = "Rezaei"
+        self.user.save()
+
+        response = self.client.get(PROFILE_URL)
+        self.assertTrue(response.data["profile_complete"])
+
+    def test_profile_complete_is_read_only(self):
+        response = self.client.patch(
+            PROFILE_URL,
+            {
+                "first_name": "Ali",
+                "last_name": "Rezaei",
+                "profile_complete": True,
+            },
+            content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["profile_complete"])
 
 class AddressTests(TestCase):
     def setUp(self):

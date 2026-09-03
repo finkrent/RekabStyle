@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Address
-from orders.models import Order
+from orders.models import CustomDesign, Order
 from orders.services.orders import create_order
 import payments.services.zibal as zibal_module
 from payments.models import Payment
@@ -24,6 +24,7 @@ REQUEST_TARGET = "payments.services.payments.request_payment"
 VERIFY_TARGET = "payments.services.payments.verify_payment"
 SMS_CUSTOMER_TARGET = "notifications.services.sms.send_order_paid_sms_to_customer"
 SMS_ADMIN_TARGET = "notifications.services.sms.send_order_paid_sms_to_admin"
+SMS_CUSTOM_ADMIN_TARGET = "notifications.services.sms.send_custom_order_paid_sms_to_admin"
 
 
 class PaymentTestBase(TestCase):
@@ -124,10 +125,13 @@ class InitiatePaymentTests(PaymentTestBase):
 
 
 class VerifyPaymentTests(PaymentTestBase):
+    @patch(SMS_CUSTOM_ADMIN_TARGET)
     @patch(SMS_ADMIN_TARGET)
     @patch(SMS_CUSTOMER_TARGET)
     @patch(VERIFY_TARGET)
-    def test_successful_verification_updates_order(self, mock_verify, mock_sms_customer, mock_sms_admin):
+    def test_successful_verification_updates_order(
+        self, mock_verify, mock_sms_customer, mock_sms_admin, mock_sms_custom_admin
+    ):
         self._make_payment()
         mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
 
@@ -145,6 +149,31 @@ class VerifyPaymentTests(PaymentTestBase):
         self.assertIsNotNone(payment.paid_at)
         mock_sms_customer.assert_called_once()
         mock_sms_admin.assert_called_once()
+        mock_sms_custom_admin.assert_not_called()
+
+    @patch(SMS_CUSTOM_ADMIN_TARGET)
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_custom_order_uses_custom_admin_sms(
+        self, mock_verify, mock_sms_customer, mock_sms_admin, mock_sms_custom_admin
+    ):
+        custom_design = CustomDesign.objects.create(
+            order=self.order, description="A custom design request"
+        )
+        custom_design.order_items.add(self.order.items.first())
+        self._make_payment()
+        mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_sms_customer.assert_called_once()
+        mock_sms_custom_admin.assert_called_once()
+        mock_sms_admin.assert_not_called()
 
     @patch(VERIFY_TARGET)
     def test_incorrect_amount_rejected(self, mock_verify):

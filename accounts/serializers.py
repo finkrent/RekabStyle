@@ -50,6 +50,7 @@ class AddressSerializer(serializers.ModelSerializer):
 class ProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     addresses = AddressSerializer(many=True, read_only=True)
+    profile_complete = serializers.BooleanField(source="profile_is_complete", read_only=True)
 
     class Meta:
         model = User
@@ -60,6 +61,8 @@ class ProfileSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "addresses",
+            "profile_complete",
+
         ]
         # phone_number and national_id are identity fields, managed by the
         # registration flow / staff, not editable through the profile API.
