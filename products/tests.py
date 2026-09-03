@@ -76,6 +76,34 @@ class ProductApiTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Laptop Pro")
 
+    def test_search_matches_description_case_insensitively_and_partially(self):
+        Product.objects.create(
+            name="Travel Mug", description="Insulated kitchen companion", price=5000
+        )
+        response = self.client.get(PRODUCT_LIST_URL, {"search": " KITCHEN "})
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["name"], "Travel Mug")
+
+    def test_search_excludes_inactive_products(self):
+        Product.objects.create(
+            name="Hidden Laptop", description="private laptop", price=5000, is_active=False
+        )
+        response = self.client.get(PRODUCT_LIST_URL, {"search": "laptop"})
+        self.assertEqual(response.data["count"], 0)
+
+    def test_search_combines_with_category_filter(self):
+        laptop = Product.objects.create(name="Laptop Pro", price=50000000)
+        laptop.categories.add(self.home)
+        response = self.client.get(
+            PRODUCT_LIST_URL, {"search": "laptop", "category": self.home.pk}
+        )
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["name"], "Laptop Pro")
+
+    def test_blank_search_returns_unfiltered_active_products(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"search": "   "})
+        self.assertEqual(response.data["count"], 1)
+
     def test_category_list_includes_subcategories(self):
         response = self.client.get(CATEGORY_LIST_URL)
         self.assertEqual(response.status_code, 200)

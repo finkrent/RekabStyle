@@ -24,7 +24,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         params = self.request.query_params
         category = params.get("category")
         subcategory = params.get("subcategory")
-        search = params.get("search")
+        search = params.get("search", "").strip()
         if category:
             queryset = queryset.filter(categories__id=category).distinct()
         if subcategory:

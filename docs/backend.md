@@ -8,7 +8,7 @@ This explanation describes the implemented Django backend. It supports Django
 | App | Responsibility |
 | --- | --- |
 | `accounts` | User, OTP, profile, and address workflows |
-| `products` | Catalog and best sellers |
+| `products` | Catalog search, filters, and best sellers |
 | `orders` | Checkout, snapshots, custom designs, and image validation |
 | `payments` | Zibal client and payment orchestration |
 | `notifications` | Kavenegar client and SMS templates |
@@ -17,6 +17,13 @@ This explanation describes the implemented Django backend. It supports Django
 Views adapt HTTP requests. Serializers validate input, services own business
 rules and transactions, and provider modules isolate external HTTP calls.
 Follow `serializer -> service -> model/provider -> response` when adding work.
+
+Product search is implemented in `ProductViewSet.get_queryset`. It starts from
+the active-product queryset and adds one `Q` filter for `name` or `description`
+when `search.strip()` is non-empty. DRF evaluates the catalog queryset once
+when building the response, with the bounded related-object prefetches already
+defined by the view; it does not perform work per input character. Clients
+should submit on Enter or an explicit search-button action.
 
 ## Domain behavior
 
