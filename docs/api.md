@@ -52,7 +52,7 @@ Public endpoints are `GET /products/`, `GET /products/{id}/`,
 `GET /categories/`, `GET /categories/{id}/`,
 `GET /categories/{id}/subcategories/`, `GET /subcategories/`, and
 `GET /best-sellers/`. Product filters are `?category=<numeric-id>`,
-`?subcategory=<numeric-id>`, and `?search=<text>`. Search is partial and
+`?subcategory=<numeric-id>`, and `?q=<text>`. Search is partial and
 case-insensitive across product name and description. Surrounding whitespace is
 ignored, and a blank search is equivalent to omitting the parameter. Only
 active products are public. Clients should submit this request on Enter or an

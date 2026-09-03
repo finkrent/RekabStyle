@@ -10,7 +10,7 @@ from products.serializers import CategorySerializer, ProductSerializer, Subcateg
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     """Public product catalog.
 
-    Filters: ?category=<id>, ?subcategory=<id>, ?search=<text>.
+    Filters: ?category=<id>, ?subcategory=<id>, ?q=<text>.
     The category/subcategory filters match any of the product's (many)
     categories/subcategories.
     """
@@ -24,7 +24,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         params = self.request.query_params
         category = params.get("category")
         subcategory = params.get("subcategory")
-        search = params.get("search", "").strip()
+        search = params.get("q", "").strip()
         if category:
             queryset = queryset.filter(categories__id=category).distinct()
         if subcategory:
