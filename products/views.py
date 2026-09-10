@@ -38,6 +38,7 @@ class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """Public subcategory list/detail. Filter: ?category=<id>"""
 
     serializer_class = SubcategorySerializer
+    pagination_class = None
 
     def get_queryset(self):
         queryset = Subcategory.objects.filter(is_active=True).select_related("category")
@@ -56,12 +57,7 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["get"])
     def subcategories(self, request, pk=None):
         subcategories = self.get_object().subcategories.filter(is_active=True)
-        page = self.paginate_queryset(subcategories)
-        serializer = SubcategorySerializer(
-            page if page is not None else subcategories, many=True
-        )
-        if page is not None:
-            return self.get_paginated_response(serializer.data)
+        serializer = SubcategorySerializer(subcategories, many=True)
         return Response(serializer.data)
 
 

@@ -114,14 +114,28 @@ class ProductApiTests(TestCase):
         )
 
     def test_category_subcategories_action(self):
+        Subcategory.objects.bulk_create(
+            [
+                Subcategory(category=self.electronics, name=f"Accessory {index}")
+                for index in range(21)
+            ]
+        )
         url = reverse("category-subcategories", args=[self.electronics.pk])
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 2)
+        self.assertIsInstance(response.data, list)
+        self.assertEqual(len(response.data), 23)
 
     def test_subcategory_filter_by_category(self):
+        Subcategory.objects.bulk_create(
+            [
+                Subcategory(category=self.electronics, name=f"Accessory {index}")
+                for index in range(21)
+            ]
+        )
         response = self.client.get(SUBCATEGORY_LIST_URL, {"category": self.electronics.pk})
-        self.assertEqual(response.data["count"], 2)
+        self.assertIsInstance(response.data, list)
+        self.assertEqual(len(response.data), 23)
 
     def test_validate_rejects_foreign_subcategory(self):
         fashion = Category.objects.create(name="Fashion")

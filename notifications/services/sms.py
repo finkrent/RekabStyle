@@ -110,8 +110,7 @@ def send_order_paid_sms_to_admin(order_number, customer_phone, total_price):
         برای مشاهده جزئیات بیشتر وارد پنل مدیریت شوید.
         """
     ).strip()
-    # return send_sms(admin_phone, message)
-    print(message)
+    return send_sms(admin_phone, message)
 
 
 def send_custom_order_paid_sms_to_admin(order_number, customer_phone, total_price):
@@ -132,5 +131,4 @@ def send_custom_order_paid_sms_to_admin(order_number, customer_phone, total_pric
         برای مشاهده جزئیات بیشتر وارد پنل مدیریت شوید.
         """
     ).strip()
-    # return send_sms(admin_phone, message)
-    print(message)
+    return send_sms(admin_phone, message)

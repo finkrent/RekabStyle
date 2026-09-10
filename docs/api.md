@@ -5,8 +5,10 @@ creation uses `multipart/form-data`; payment callbacks may redirect the browser.
 
 ## Conventions
 
-- Lists use `{ "count", "next", "previous", "results" }` with 20 results per page.
-  `GET /best-sellers/` returns an unpaginated array.
+- Category and product lists use `{ "count", "next", "previous", "results" }`
+  with 20 results per page. Subcategory lists, including
+  `GET /categories/{id}/subcategories/` and `GET /subcategories/`, return
+  unpaginated arrays. `GET /best-sellers/` also returns an unpaginated array.
 - Protected endpoints use `Authorization: Bearer <access>`.
 - Refresh tokens rotate in an httpOnly, `SameSite=Strict` cookie named
   `refresh_token` by default, scoped to `/api/v1/accounts/`.
