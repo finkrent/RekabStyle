@@ -53,32 +53,36 @@ INSTALLED_APPS = [
     "corsheaders",
 ]
 
+# CorsMiddleware must sit above anything that can produce a response
+# (django-cors-headers requirement); WhiteNoise goes directly after
+# SecurityMiddleware. SecurityMiddleware must appear exactly once.
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
 STATICFILES_STORAGE = (
     "whitenoise.storage.CompressedManifestStaticFilesStorage"
 )
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# Local development origins; overridable through the environment
+# (see .env.example: DJANGO_CORS_ALLOWED_ORIGINS / DJANGO_CORS_TRUSTED_ORIGINS).
+CORS_ALLOWED_ORIGINS = _env_list(
+    "DJANGO_CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+)
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CSRF_TRUSTED_ORIGINS = _env_list(
+    "DJANGO_CORS_TRUSTED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
+)
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -130,7 +134,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -179,8 +183,22 @@ OTP = {
 }
 
 # --- Kavenegar (SMS) ---
+# All SMS goes through Kavenegar's verify/lookup.json, which can only send
+# templates created and approved in the Kavenegar panel; these names must
+# match them (see docs/configuration.md for the required placeholders).
 KAVENEGAR_API_KEY = os.environ.get("KAVENEGAR_API_KEY", "")
-KAVENEGAR_SENDER = os.environ.get("KAVENEGAR_SENDER", "")
+KAVENEGAR_TEMPLATES = {
+    "OTP": os.environ.get("KAVENEGAR_OTP_TEMPLATE", "rekab-otp"),
+    "ORDER_PAID_CUSTOMER": os.environ.get(
+        "KAVENEGAR_ORDER_PAID_CUSTOMER_TEMPLATE", "rekab-order-paid"
+    ),
+    "ORDER_PAID_ADMIN": os.environ.get(
+        "KAVENEGAR_ORDER_PAID_ADMIN_TEMPLATE", "rekab-order-paid-admin"
+    ),
+    "CUSTOM_ORDER_PAID_ADMIN": os.environ.get(
+        "KAVENEGAR_CUSTOM_ORDER_PAID_ADMIN_TEMPLATE", "rekab-custom-order-paid"
+    ),
+}
 ADMIN_PHONE_NUMBER = os.environ.get("ADMIN_PHONE_NUMBER", "")
 
 # --- Zibal (payment) ---

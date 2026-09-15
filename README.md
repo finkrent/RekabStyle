@@ -45,7 +45,7 @@ this in production.
 | `products/` | Categories, subcategories, products, and best sellers |
 | `orders/` | Orders, custom designs, image handling, and checkout |
 | `payments/` | Zibal requests, verification, and payment orchestration |
-| `notifications/` | Kavenegar REST client and SMS templates |
+| `notifications/` | Kavenegar verify/lookup client and templates |
 | `docs/` | Integration and operations documentation |
 
 ## Behavior at a glance
@@ -60,9 +60,11 @@ decoded and re-encoded with Pillow before storage.
 
 Payments are verified server-side with Zibal. Successful verification is
 idempotent and marks the payment and order in one transaction. Customer payment
-SMS uses Kavenegar. Administrator notifications select a custom-design or normal
-template, but the current admin helpers print their messages because their
-Kavenegar send calls are disabled.
+SMS uses Kavenegar. All SMS is sent through `verify/lookup.json` templates that
+must be created and approved in the Kavenegar panel (see
+[docs/configuration.md](docs/configuration.md)). Administrator notifications
+select a custom-design or normal template; both admin helpers send through
+Kavenegar to ``ADMIN_PHONE_NUMBER`` when it is configured.
 
 Money is stored in Toman and serialized by DRF as JSON strings. Zibal receives
 Rial only at the gateway boundary.
@@ -84,3 +86,4 @@ temporary PostgreSQL database, so the database user needs create-database permis
 - [Backend architecture](docs/backend.md)
 - [Configuration reference](docs/configuration.md)
 - [Deployment guide](docs/deployment.md)
+- [Backend code review](docs/backend-review.md)

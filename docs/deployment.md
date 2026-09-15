@@ -1,7 +1,8 @@
 # Deployment Guide
 
 Deploy on Linux with PostgreSQL, a Python WSGI server, and a reverse proxy.
-The project does not include Docker, Redis, Celery, or Gunicorn as a dependency.
+The project does not include Docker, Redis, or Celery. Gunicorn is included as
+the WSGI server dependency.
 
 ## Deploy
 
@@ -36,8 +37,9 @@ redirects, and Admin login. Keep database and `media/` backups together because
 orders reference uploaded files. Payment verification is server-side and
 idempotent; SMS failures do not roll back a successful payment.
 
-Customer payment SMS uses Kavenegar. Administrator helpers currently print their
-selected messages. The optional `ADMIN_PHONE_NUMBER` is not required at runtime.
+Customer payment SMS uses Kavenegar. Administrator payment SMS is sent to
+`ADMIN_PHONE_NUMBER` when it is configured; unset, it is skipped with a log
+warning.
 
 Schedule expired-token cleanup:
 

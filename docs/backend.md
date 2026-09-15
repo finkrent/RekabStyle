@@ -11,7 +11,7 @@ This explanation describes the implemented Django backend. It supports Django
 | `products` | Catalog search, filters, and best sellers |
 | `orders` | Checkout, snapshots, custom designs, and image validation |
 | `payments` | Zibal client and payment orchestration |
-| `notifications` | Kavenegar client and SMS templates |
+| `notifications` | Kavenegar verify/lookup client |
 | `config` | Settings and root routes |
 
 Views adapt HTTP requests. Serializers validate input, services own business
@@ -45,16 +45,22 @@ checks the gateway amount in Rial against the stored Toman amount multiplied by
 10. A row lock makes completion idempotent; successful payment and order status
 are committed together before notifications are attempted.
 
-Customer payment SMS uses Kavenegar. The administrator helper is selected by the
+Customer payment SMS uses Kavenegar's `verify/lookup.json` endpoint, which can
+only send templates approved in the Kavenegar panel; tokens (order number,
+amount) are sanitized to latin letters and digits before sending. The
+administrator helper is selected by the
 presence of `order.custom_design`: custom orders use
 `send_custom_order_paid_sms_to_admin`, and normal orders use
 `send_order_paid_sms_to_admin`. Notification failures are logged and do not
-change payment state. The admin helpers currently print instead of sending.
+change payment state. Both admin helpers send through Kavenegar to
+`ADMIN_PHONE_NUMBER`; when it is unset they log a warning and skip.
 
 ## Testing and known gaps
 
 Run `uv run python manage.py test`. Tests use Django `TestCase` and patch Zibal
 and Kavenegar boundaries. Current gaps include no per-IP OTP throttling,
 synchronous SMS, no stock decrement, unbounded OTP-row growth, no OpenAPI
-schema, and no automatic expired-OTP cleanup. Local CORS origins are hard-coded;
-production HTTPS and HSTS policy belongs at the deployment boundary.
+schema, and no automatic expired-OTP cleanup. Local CORS and CSRF origins default to `http://localhost:3000` and
+`http://127.0.0.1:3000` and are overridable through
+`DJANGO_CORS_ALLOWED_ORIGINS` / `DJANGO_CORS_TRUSTED_ORIGINS`; production
+HTTPS and HSTS policy belongs at the deployment boundary.

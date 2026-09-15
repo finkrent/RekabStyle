@@ -26,7 +26,6 @@ VALID_NATIONAL_ID_2 = "0012345687"
 INVALID_NATIONAL_ID = "0012345678"
 
 SMS_TARGET = "notifications.services.sms.send_otp_sms"
-SEND_SMS_TARGET = "notifications.services.sms.send_sms"
 PHONE = "09123456789"
 
 
@@ -82,13 +81,16 @@ class RequestOtpTests(TestCase):
 
 
 class OtpSmsMessageTests(TestCase):
-    @patch(SEND_SMS_TARGET)
-    def test_otp_message_is_multi_line_and_contains_code(self, mock_send_sms):
+    @patch("notifications.services.sms.verify_lookup")
+    def test_otp_sent_via_lookup_template_with_expiry(self, mock_lookup):
         send_otp_sms(PHONE, "123456")
-        message = mock_send_sms.call_args[0][1]
-        self.assertIn("123456", message)
-        self.assertIn("\n", message)  # multi-line message
-        self.assertNotIn("\\n", message)  # literal sequences were converted
+        expected_minutes = max(1, settings.OTP["EXPIRE_SECONDS"] // 60)
+        mock_lookup.assert_called_once_with(
+            PHONE,
+            template=settings.KAVENEGAR_TEMPLATES["OTP"],
+            token="123456",
+            token2=expected_minutes,
+        )
 
 
 class VerifyOtpTests(TestCase):

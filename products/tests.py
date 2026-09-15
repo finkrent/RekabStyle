@@ -72,7 +72,7 @@ class ProductApiTests(TestCase):
 
     def test_product_filter_and_search(self):
         Product.objects.create(name="Laptop Pro", price=50000000)
-        response = self.client.get(PRODUCT_LIST_URL, {"search": "laptop"})
+        response = self.client.get(PRODUCT_LIST_URL, {"q": "laptop"})
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Laptop Pro")
 
@@ -80,7 +80,7 @@ class ProductApiTests(TestCase):
         Product.objects.create(
             name="Travel Mug", description="Insulated kitchen companion", price=5000
         )
-        response = self.client.get(PRODUCT_LIST_URL, {"search": " KITCHEN "})
+        response = self.client.get(PRODUCT_LIST_URL, {"q": " KITCHEN "})
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Travel Mug")
 
@@ -88,20 +88,20 @@ class ProductApiTests(TestCase):
         Product.objects.create(
             name="Hidden Laptop", description="private laptop", price=5000, is_active=False
         )
-        response = self.client.get(PRODUCT_LIST_URL, {"search": "laptop"})
+        response = self.client.get(PRODUCT_LIST_URL, {"q": "laptop"})
         self.assertEqual(response.data["count"], 0)
 
     def test_search_combines_with_category_filter(self):
         laptop = Product.objects.create(name="Laptop Pro", price=50000000)
         laptop.categories.add(self.home)
         response = self.client.get(
-            PRODUCT_LIST_URL, {"search": "laptop", "category": self.home.pk}
+            PRODUCT_LIST_URL, {"q": "laptop", "category": self.home.pk}
         )
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Laptop Pro")
 
     def test_blank_search_returns_unfiltered_active_products(self):
-        response = self.client.get(PRODUCT_LIST_URL, {"search": "   "})
+        response = self.client.get(PRODUCT_LIST_URL, {"q": "   "})
         self.assertEqual(response.data["count"], 1)
 
     def test_category_list_includes_subcategories(self):
