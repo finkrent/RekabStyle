@@ -1,10 +1,15 @@
-﻿from django.db.models import Q
+from django.db.models import Prefetch, Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from products.models import Category, Product, Subcategory
-from products.serializers import CategorySerializer, ProductSerializer, SubcategorySerializer
+from products.serializers import (
+    CategorySerializer,
+    ProductSerializer,
+    SubcategoryDetailSerializer,
+    SubcategorySerializer,
+)
 
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
@@ -37,11 +42,24 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """Public subcategory list/detail. Filter: ?category=<id>"""
 
-    serializer_class = SubcategorySerializer
     pagination_class = None
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return SubcategoryDetailSerializer
+        return SubcategorySerializer
 
     def get_queryset(self):
         queryset = Subcategory.objects.filter(is_active=True).select_related("category")
+        if self.action == "retrieve":
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    "products",
+                    queryset=Product.objects.filter(is_active=True).prefetch_related(
+                        "categories", "subcategories"
+                    ),
+                )
+            )
         category = self.request.query_params.get("category")
         if category:
             queryset = queryset.filter(category_id=category)

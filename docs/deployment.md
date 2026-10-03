@@ -19,7 +19,8 @@ the WSGI server dependency.
    uv run python manage.py createsuperuser
    ```
 
-4. Install a WSGI server separately and run, for example:
+4. Run the WSGI server (Gunicorn is a project dependency; `uv sync` already
+   installs it), for example:
 
    ```bash
    uv run gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3

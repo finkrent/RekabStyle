@@ -26,7 +26,9 @@ localhost ports 3000, but same-origin proxying is still recommended.
 1. Request an OTP at `/accounts/request-otp/`.
 2. Verify it at `/accounts/verify-otp/`.
 3. Store the returned access token in memory only.
-4. For a new phone, complete registration in the same browser session.
+4. For a new phone, complete registration in the same browser session. The
+   response includes a new `access` token and sets the refresh cookie, so no
+   separate sign-in step is needed.
 5. Send `Authorization: Bearer <access>` on protected requests.
 
 Include `credentials: "include"`. On startup refresh once. On a `401`, refresh

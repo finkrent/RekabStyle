@@ -13,12 +13,12 @@ class ProductSerializer(serializers.ModelSerializer):
         many=True, read_only=True, slug_field="name", source="subcategories"
     )
 
-
     class Meta:
         model = Product
         fields = [
             "id",
             "name",
+            "slug",
             "description",
             "price",
             "image",
@@ -26,8 +26,6 @@ class ProductSerializer(serializers.ModelSerializer):
             "category_names",
             "subcategories",
             "subcategory_names",
-
-
             "is_active",
             "created_at",
         ]
@@ -38,7 +36,14 @@ class SubcategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Subcategory
-        fields = ["id", "name", "category", "category_name", "is_active"]
+        fields = ["id", "name", "slug", "category", "category_name", "is_active"]
+
+
+class SubcategoryDetailSerializer(SubcategorySerializer):
+    products = ProductSerializer(many=True, read_only=True)
+
+    class Meta(SubcategorySerializer.Meta):
+        fields = [*SubcategorySerializer.Meta.fields, "products"]
 
 
 class CategorySerializer(serializers.ModelSerializer):

@@ -1,6 +1,8 @@
 ﻿from django.core.exceptions import ValidationError
 from django.db import models
 
+from .fields import AutoSlugField, AutoSlugManager
+
 
 class TimestampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -23,10 +25,15 @@ class Category(TimestampedModel):
 
 
 class Subcategory(TimestampedModel):
+    objects = AutoSlugManager()
+
     category = models.ForeignKey(
         Category, on_delete=models.PROTECT, related_name="subcategories", verbose_name="Category"
     )
     name = models.CharField("Name", max_length=120)
+    slug = AutoSlugField(
+        max_length=150, unique_scope=("category",), allow_unicode=True, db_index=False
+    )
     is_active = models.BooleanField("Active", default=True)
 
     class Meta:
@@ -34,7 +41,10 @@ class Subcategory(TimestampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=("category", "name"), name="uniq_subcategory_name_per_category"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=("category", "slug"), name="uniq_subcategory_slug_per_category"
+            ),
         ]
 
     def __str__(self):
@@ -42,6 +52,8 @@ class Subcategory(TimestampedModel):
 
 
 class Product(TimestampedModel):
+    objects = AutoSlugManager()
+
     categories = models.ManyToManyField(
         Category,
         blank=True,
@@ -60,6 +72,7 @@ class Product(TimestampedModel):
         ),
     )
     name = models.CharField("Name", max_length=200)
+    slug = AutoSlugField(max_length=250, unique=True, allow_unicode=True, db_index=False)
     description = models.TextField("Description", blank=True)
     price = models.DecimalField("Price (Toman)", max_digits=12, decimal_places=0)
     image = models.ImageField("Image", upload_to="products/", null=True, blank=True)

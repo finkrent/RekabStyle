@@ -37,6 +37,7 @@ class CategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Subcategory)
 class SubcategoryAdmin(admin.ModelAdmin):
+    fields = ("category", "name", "slug", "is_active")
     list_display = ("name", "category", "is_active", "created_at")
     list_filter = ("category", "is_active")
     search_fields = ("name",)
@@ -46,6 +47,18 @@ class SubcategoryAdmin(admin.ModelAdmin):
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     form = ProductAdminForm
+    fields = (
+        "name",
+        "slug",
+        "description",
+        "price",
+        "image",
+        "categories",
+        "subcategories",
+        "is_active",
+        "created_at",
+        "updated_at",
+    )
     list_display = ("name", "price", "categories_summary", "is_active", "created_at")
     list_filter = ("is_active",)
     search_fields = ("name", "description")

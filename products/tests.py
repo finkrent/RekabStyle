@@ -1,8 +1,12 @@
 ﻿from django.core.exceptions import ValidationError
+from unittest.mock import Mock
+
+from django.contrib import admin
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
+from products.admin import ProductAdminForm
 from products.models import BestSeller, Category, Product, Subcategory
 
 
@@ -197,3 +201,138 @@ class BestSellerApiTests(TestCase):
         BestSeller.objects.create(product=self.phone, position=0)
         with self.assertRaises(IntegrityError):
             BestSeller.objects.create(product=self.phone, position=1)
+
+
+class ProductSlugTests(TestCase):
+    """Products get a unique slug generated from their name."""
+
+    def test_slug_is_generated_from_name(self):
+        product = Product.objects.create(name="Phone X", price=1000)
+        self.assertEqual(product.slug, "phone-x")
+
+    def test_duplicate_names_get_unique_slugs(self):
+        first = Product.objects.create(name="Phone X", price=1000)
+        second = Product.objects.create(name="Phone X", price=2000)
+        self.assertEqual(first.slug, "phone-x")
+        self.assertEqual(second.slug, "phone-x-2")
+
+    def test_product_detail_exposes_slug(self):
+        product = Product.objects.create(name="Phone X", price=1000)
+        response = self.client.get(reverse("product-detail", args=[product.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["slug"], "phone-x")
+
+
+class SubcategorySlugTests(TestCase):
+    """Subcategory slugs are unique within their category."""
+
+    def setUp(self):
+        self.electronics = Category.objects.create(name="Electronics")
+        self.home = Category.objects.create(name="Home & Kitchen")
+
+    def test_slug_is_generated_from_name(self):
+        subcategory = Subcategory.objects.create(
+            category=self.electronics, name="Mobile Phones"
+        )
+        self.assertEqual(subcategory.slug, "mobile-phones")
+
+    def test_same_name_in_different_categories_keeps_the_same_slug(self):
+        first = Subcategory.objects.create(category=self.electronics, name="Audio")
+        second = Subcategory.objects.create(category=self.home, name="Audio")
+        self.assertEqual(first.slug, "audio")
+        self.assertEqual(second.slug, "audio")
+
+    def test_slug_collision_within_category_gets_suffix(self):
+        first = Subcategory.objects.create(category=self.electronics, name="Audio")
+        second = Subcategory.objects.create(category=self.electronics, name="AUDIO")
+        self.assertEqual(first.slug, "audio")
+        self.assertEqual(second.slug, "audio-2")
+
+    def test_bulk_create_generates_slugs(self):
+        Subcategory.objects.bulk_create(
+            [
+                Subcategory(category=self.electronics, name=f"Accessory {index}")
+                for index in range(3)
+            ]
+        )
+        slugs = list(
+            Subcategory.objects.filter(category=self.electronics).values_list(
+                "slug", flat=True
+            )
+        )
+        self.assertEqual(sorted(slugs), ["accessory-0", "accessory-1", "accessory-2"])
+
+
+class AdminSlugTests(TestCase):
+    def setUp(self):
+        self.category = Category.objects.create(name="Electronics")
+
+    def test_product_admin_can_set_slug(self):
+        form = ProductAdminForm(
+            data={
+                "name": "Phone X",
+                "slug": "custom-phone",
+                "description": "",
+                "price": "1000",
+                "image": "",
+                "categories": [],
+                "subcategories": [],
+                "is_active": "on",
+            }
+        )
+
+        self.assertIn("slug", form.fields)
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.save().slug, "custom-phone")
+
+    def test_subcategory_admin_can_set_slug(self):
+        request = RequestFactory().get("/admin/")
+        request.user = Mock()
+        request.user.has_perm.return_value = True
+        form_class = admin.site._registry[Subcategory].get_form(request)
+        form = form_class(
+            data={
+                "name": "Audio",
+                "slug": "custom-audio",
+                "category": self.category.pk,
+                "is_active": "on",
+            }
+        )
+
+        self.assertIn("slug", form.fields)
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.save().slug, "custom-audio")
+
+
+class SubcategoryDetailProductsTests(TestCase):
+    """GET /subcategories/{id}/ embeds the subcategory's active products."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name="Electronics")
+        self.phones = Subcategory.objects.create(
+            category=self.category, name="Mobile Phones"
+        )
+        self.phone = Product.objects.create(name="Phone X", price=25000000)
+        self.phone.categories.add(self.category)
+        self.phone.subcategories.add(self.phones)
+        self.hidden = Product.objects.create(name="Hidden", price=1000, is_active=False)
+        self.hidden.subcategories.add(self.phones)
+
+    def test_detail_embeds_active_products(self):
+        response = self.client.get(reverse("subcategory-detail", args=[self.phones.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["slug"], "mobile-phones")
+        names = [item["name"] for item in response.data["products"]]
+        self.assertEqual(names, ["Phone X"])
+
+    def test_embedded_product_carries_core_fields(self):
+        response = self.client.get(reverse("subcategory-detail", args=[self.phones.pk]))
+        product = response.data["products"][0]
+        self.assertEqual(product["slug"], "phone-x")
+        self.assertEqual(product["price"], "25000000")
+
+    def test_list_does_not_embed_products(self):
+        response = self.client.get(SUBCATEGORY_LIST_URL)
+        self.assertEqual(response.status_code, 200)
+        for item in response.data:
+            self.assertNotIn("products", item)
