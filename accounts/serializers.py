@@ -69,5 +69,5 @@ class ProfileSerializer(serializers.ModelSerializer):
         # Addresses are managed through the /addresses/ endpoints.
         read_only_fields = ["phone_number", "national_id", "addresses"]
 
-    def get_full_name(self, obj):
+    def get_full_name(self, obj) -> str:
         return obj.get_full_name()

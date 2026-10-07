@@ -3,7 +3,8 @@
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
-from rest_framework import permissions, status
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from rest_framework import permissions, serializers, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
@@ -15,6 +16,32 @@ from payments.services.payments import PaymentError, initiate_payment, verify_an
 from payments.services.zibal import ZibalError, payment_url
 
 
+class InitiatePaymentRequest(serializers.Serializer):
+    """Body of POST /api/v1/payments/initiate/."""
+
+    order_id = serializers.IntegerField(help_text="PK of the user's pending order.")
+
+
+class VerifyPaymentRequest(serializers.Serializer):
+    """Body of POST /api/v1/payments/verify/."""
+
+    track_id = serializers.CharField(help_text="Authority returned by initiate.")
+
+
+@extend_schema(
+    request=InitiatePaymentRequest,
+    responses={
+        201: OpenApiResponse(
+            description=(
+                "Payment session created: track_id, payment_url, amount. "
+                "Redirect the customer to payment_url."
+            )
+        ),
+        400: OpenApiResponse(description="order_id missing or order not payable."),
+        404: OpenApiResponse(description="Order not found for this user."),
+        502: OpenApiResponse(description="Payment gateway error."),
+    },
+)
 class InitiatePaymentView(APIView):
     """POST /api/v1/payments/initiate/ {"order_id": <id>} -> {payment_url, track_id}
 
@@ -54,6 +81,25 @@ class InitiatePaymentView(APIView):
         )
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            "trackId", type=str, required=True, description="Zibal authority (track id)."
+        ),
+        OpenApiParameter(
+            "success", type=str, description="'1' when the customer completed payment."
+        ),
+    ],
+    responses={
+        200: OpenApiResponse(
+            description=(
+                "Payment verified. Returns JSON, or a 302 redirect to the frontend "
+                "result page when FRONTEND_PAYMENT_RESULT_URL is set."
+            )
+        ),
+        400: OpenApiResponse(description="trackId missing or verification failed."),
+    },
+)
 class PaymentCallbackView(APIView):
     """GET /api/v1/payments/callback/ - Zibal redirects the customer's browser here.
 
@@ -101,6 +147,16 @@ class PaymentCallbackView(APIView):
         return Response(payload)
 
 
+@extend_schema(
+    request=VerifyPaymentRequest,
+    responses={
+        200: OpenApiResponse(
+            description="Verified: order_number, order_status, payment_status. Idempotent."
+        ),
+        400: OpenApiResponse(description="track_id missing or verification failed."),
+        502: OpenApiResponse(description="Payment gateway error."),
+    },
+)
 class PaymentVerifyView(APIView):
     """POST /api/v1/payments/verify/ {"track_id": "..."}
 

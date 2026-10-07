@@ -1,6 +1,7 @@
 ﻿import json
 
 from django.conf import settings
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from accounts.models import Address
@@ -73,10 +74,12 @@ class OrderSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_payment_status(self, obj):
         latest = obj.payments.order_by("-created_at").first()
         return latest.status if latest else None
 
+    @extend_schema_field(CustomDesignSerializer(allow_null=True))
     def get_custom_design(self, obj):
         # getattr returns None for orders without a design (RelatedObjectDoesNotExist
         # subclasses AttributeError); avoids an extra query via try/except.

@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model, login
 from django.db import IntegrityError, transaction
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
@@ -65,6 +66,25 @@ class HasPendingSignup(permissions.BasePermission):
         return bool(request.session.get("pending_signup_phone"))
 
 
+@extend_schema(
+    request=RequestOtpSerializer,
+    responses={
+        200: OpenApiResponse(
+            description=(
+                "OTP sent. Returns expires_in (seconds); with "
+                "OTP_DEBUG_RETURN_CODE enabled the response also carries debug_code."
+            )
+        ),
+        400: OpenApiResponse(description="Invalid phone number."),
+        429: OpenApiResponse(
+            description=(
+                "Cooldown, hourly rate limit or too many attempts "
+                "(code: cooldown | rate_limited | too_many_attempts)."
+            )
+        ),
+        503: OpenApiResponse(description="SMS gateway unavailable. Try again later."),
+    },
+)
 class RequestOtpView(APIView):
     """POST /api/v1/accounts/request-otp/ - send an OTP to the phone number.
 
@@ -112,6 +132,21 @@ class RequestOtpView(APIView):
         )
 
 
+@extend_schema(
+    request=VerifyOtpSerializer,
+    responses={
+        200: OpenApiResponse(
+            description=(
+                "OTP valid. Existing user: logged in - returns access and sets "
+                "the refresh cookie. New user: national_id_required is true and "
+                "the verified phone is staged in the session."
+            )
+        ),
+        400: OpenApiResponse(description="Invalid or expired OTP (error code in payload)."),
+        403: OpenApiResponse(description="Account disabled."),
+        429: OpenApiResponse(description="Too many attempts or rate limited."),
+    },
+)
 class VerifyOtpView(APIView):
     """POST /api/v1/accounts/verify-otp/ - verify the OTP.
 
@@ -166,6 +201,18 @@ class VerifyOtpView(APIView):
         return response
 
 
+@extend_schema(
+    request=CompleteRegistrationSerializer,
+    responses={
+        200: OpenApiResponse(
+            description=(
+                "Registration completed - returns access and sets the refresh cookie."
+            )
+        ),
+        403: OpenApiResponse(description="No verified-OTP session in progress."),
+        409: OpenApiResponse(description="Phone number or national ID already registered."),
+    },
+)
 class CompleteRegistrationView(APIView):
     """POST /api/v1/accounts/complete-registration/ - finish sign-up.
 
@@ -301,6 +348,14 @@ class TokenRefreshView(BaseTokenRefreshView):
         return response
 
 
+@extend_schema(
+    request=None,
+    responses={
+        200: OpenApiResponse(
+            description="Refresh token blacklisted and its cookie cleared."
+        )
+    },
+)
 class LogoutView(APIView):
     """POST /api/v1/accounts/logout/ - blacklist the refresh token and
     clear its cookie. Purely token-based: no CSRF requirement."""

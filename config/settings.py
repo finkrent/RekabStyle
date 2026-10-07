@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
     "accounts",
     "products",
@@ -149,6 +150,20 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # OpenAPI 3 schema generation (drf-spectacular) - feeds the Swagger UI
+    # served at /api/docs/ in development (see config/urls.py).
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Mimo Shop API",
+    "DESCRIPTION": (
+        "REST API of the Mimo Shop backend (accounts & OTP auth, product "
+        "catalog, orders and payments)."
+    ),
+    "VERSION": "1.0.0",
+    # The schema itself is served by SpectacularAPIView at /api/schema/.
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 SIMPLE_JWT = {
