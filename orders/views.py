@@ -9,9 +9,10 @@ from orders.serializers import (
     AdminOrderSerializer,
     OrderCreateSerializer,
     OrderSerializer,
+    OrderUpdateSerializer,
 )
 from orders.services.design_uploads import ImageValidationError, validate_and_reencode
-from orders.services.orders import OrderError, create_order
+from orders.services.orders import OrderError, create_order, update_order_items
 
 User = get_user_model()
 
@@ -41,7 +42,9 @@ class OrderListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = Order.objects.prefetch_related("items", "payments")
+        queryset = Order.objects.prefetch_related(
+            "items", "items__options", "payments", "custom_design"
+        )
         if self.request.user.is_staff:
             return queryset.select_related("user")
         return queryset.filter(user=self.request.user)
@@ -90,16 +93,39 @@ class OrderListCreateView(generics.ListCreateAPIView):
         }
 
 
-class OrderDetailView(generics.RetrieveAPIView):
-    """GET a single order. Users see only their own orders; staff see all."""
+class OrderDetailView(generics.RetrieveUpdateAPIView):
+    """GET a single order / PATCH its item list (cart-sync).
+
+    Users see only their own orders; staff see all. PATCH replaces the
+    order's items with the submitted list: include an item to add it or
+    change its quantity, omit it to remove it. Only pending orders without
+    a custom design can be edited.
+    """
 
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
 
     def get_queryset(self):
-        queryset = Order.objects.prefetch_related("items", "payments")
+        queryset = Order.objects.prefetch_related(
+            "items", "items__options", "payments", "custom_design"
+        )
         if self.request.user.is_staff:
             return queryset.select_related("user")
         return queryset.filter(user=self.request.user)
 
     def get_serializer_class(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return OrderUpdateSerializer
         return AdminOrderSerializer if self.request.user.is_staff else OrderSerializer
+
+    def update(self, request, *args, **kwargs):
+        order = self.get_object()
+        serializer = self.get_serializer(
+            data=request.data, partial=kwargs.get("partial", False)
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            order = update_order_items(order, serializer.validated_data["items"])
+        except OrderError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        output = AdminOrderSerializer if request.user.is_staff else OrderSerializer
+        return Response(output(order, context={"request": request}).data)

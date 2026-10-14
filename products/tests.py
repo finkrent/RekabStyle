@@ -7,7 +7,7 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from products.admin import ProductAdminForm
-from products.models import BestSeller, Category, Product, Subcategory
+from products.models import AttributeChoice, BestSeller, Category, Product, ProductAttribute, Subcategory
 
 
 PRODUCT_LIST_URL = reverse("product-list")
@@ -336,3 +336,153 @@ class SubcategoryDetailProductsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         for item in response.data:
             self.assertNotIn("products", item)
+
+
+class ProductPaginationTests(TestCase):
+    """GET /products/ pages with a fixed size of 8 and stable ordering."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name="Catalog")
+        self.subcategory = Subcategory.objects.create(category=self.category, name="Mats")
+        for index in range(10):
+            product = Product.objects.create(name=f"Product {index:02d}", price=1000 + index)
+            product.categories.add(self.category)
+            product.subcategories.add(self.subcategory)
+
+    def test_page_contains_at_most_eight_products(self):
+        response = self.client.get(PRODUCT_LIST_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 10)
+        self.assertEqual(len(response.data["results"]), 8)
+        self.assertIsNotNone(response.data["next"])
+        self.assertIsNone(response.data["previous"])
+
+    def test_last_page_next_is_null(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"page": 2})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 2)
+        self.assertIsNone(response.data["next"])
+        self.assertIsNotNone(response.data["previous"])
+
+    def test_page_size_cannot_be_overridden_by_clients(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"page_size": 2})
+        self.assertEqual(len(response.data["results"]), 8)
+
+    def test_pages_are_stable_and_distinct(self):
+        first = self.client.get(PRODUCT_LIST_URL, {"page": 1}).data["results"]
+        second = self.client.get(PRODUCT_LIST_URL, {"page": 2}).data["results"]
+        first_ids = [item["id"] for item in first]
+        second_ids = [item["id"] for item in second]
+        self.assertEqual(len(set(first_ids + second_ids)), 10)
+        again = self.client.get(PRODUCT_LIST_URL, {"page": 1}).data["results"]
+        self.assertEqual(first_ids, [item["id"] for item in again])
+
+    def test_next_url_preserves_subcategory_filter(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.subcategory.pk})
+        self.assertIn(f"subcategory={self.subcategory.pk}", response.data["next"])
+
+    def test_subcategory_filter_stays_active_on_page_two(self):
+        response = self.client.get(
+            PRODUCT_LIST_URL, {"subcategory": self.subcategory.pk, "page": 2}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 2)
+        for item in response.data["results"]:
+            self.assertIn(self.subcategory.pk, item["subcategories"])
+
+
+class ProductOptionTests(TestCase):
+    """GET /products/{id}/ exposes the reference subcategory's attributes."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name="Auto")
+        self.mats = Subcategory.objects.create(category=self.category, name="Floor Mats")
+        self.covers = Subcategory.objects.create(category=self.category, name="Covers")
+        self.product = Product.objects.create(name="Mat X", price=1000000)
+        self.product.categories.add(self.category)
+        self.product.subcategories.add(self.mats, self.covers)
+
+        self.car_type = ProductAttribute.objects.create(
+            subcategory=self.mats,
+            key="car_type",
+            name="نوع خودرو",
+            input_type=ProductAttribute.INPUT_SELECT,
+            is_required=True,
+        )
+        self.sedan = AttributeChoice.objects.create(
+            attribute=self.car_type, key="sedan", label="سواری", price_delta=0
+        )
+        self.offroad = AttributeChoice.objects.create(
+            attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
+        )
+        self.car_model = ProductAttribute.objects.create(
+            subcategory=self.mats,
+            key="car_model",
+            name="مدل خودرو",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_required=True,
+        )
+        self.piece_count = ProductAttribute.objects.create(
+            subcategory=self.mats,
+            key="piece_count",
+            name="تعداد تکه",
+            input_type=ProductAttribute.INPUT_SELECT,
+            is_required=False,
+        )
+        AttributeChoice.objects.create(
+            attribute=self.piece_count, key="two_piece", label="۲ تکه", price_delta=0
+        )
+        self.hidden = ProductAttribute.objects.create(
+            subcategory=self.mats,
+            key="legacy",
+            name="Legacy",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_active=False,
+        )
+
+    def _detail(self, **params):
+        return self.client.get(reverse("product-detail", args=[self.product.pk]), params)
+
+    def test_options_include_select_and_text_attributes_together(self):
+        response = self._detail(subcategory=self.mats.pk)
+        self.assertEqual(response.status_code, 200)
+        options = {option["key"]: option for option in response.data["options"]}
+        self.assertEqual(set(options), {"car_type", "car_model", "piece_count"})
+
+        car_type = options["car_type"]
+        self.assertEqual(car_type["type"], "select")
+        self.assertTrue(car_type["required"])
+        self.assertNotIn("price_delta", car_type)
+        self.assertEqual(
+            [(choice["key"], choice["price_delta"]) for choice in car_type["choices"]],
+            [("sedan", "0"), ("offroad", "200000")],
+        )
+
+        car_model = options["car_model"]
+        self.assertEqual(car_model["type"], "text")
+        self.assertTrue(car_model["required"])
+        self.assertEqual(car_model["price_delta"], "0")
+        self.assertNotIn("choices", car_model)
+
+        self.assertFalse(options["piece_count"]["required"])
+
+    def test_inactive_attributes_are_not_returned(self):
+        response = self._detail(subcategory=self.mats.pk)
+        keys = [option["key"] for option in response.data["options"]]
+        self.assertNotIn("legacy", keys)
+
+    def test_explicit_reference_subcategory_is_used(self):
+        response = self._detail(subcategory=self.covers.pk)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["options"], [])
+
+    def test_foreign_subcategory_is_rejected(self):
+        foreign = Subcategory.objects.create(category=self.category, name="Other")
+        response = self._detail(subcategory=foreign.pk)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("subcategory", response.data)
+
+    def test_invalid_subcategory_value_is_rejected(self):
+        response = self._detail(subcategory="abc")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("subcategory", response.data)

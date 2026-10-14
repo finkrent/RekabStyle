@@ -9,8 +9,12 @@ browser. `GET /api/v1/` returns a public index of the catalog routes.
 ### Pagination
 
 Paginated lists return `{ "count", "next", "previous", "results" }` with 20
-results per page (`?page=<n>`): `GET /products/`, `GET /categories/`,
-`GET /orders/`, and `GET /accounts/addresses/`.
+results per page (`?page=<n>`): `GET /categories/`, `GET /orders/`, and
+`GET /accounts/addresses/`. `GET /products/` is fixed at 8 products per
+page and clients cannot override the page size; `next` is the full URL of
+the following page (carrying filters such as `?subcategory=` and `?q=`)
+and is `null` after the last page. Products are ordered newest first with
+the id as tiebreaker, which keeps sequential pages stable.
 
 Unpaginated arrays: `GET /subcategories/`, `GET /categories/{id}/subcategories/`,
 and `GET /best-sellers/`. Nested arrays (profile `addresses`, order `items`,
@@ -75,7 +79,7 @@ registration failures add a machine-readable `code` (`cooldown`, `rate_limited`,
 | GET | `/api/v1/subcategories/`, `/api/v1/subcategories/{id}/` | Public |
 | GET | `/api/v1/best-sellers/` | Public |
 | GET, POST | `/api/v1/orders/` | Bearer |
-| GET | `/api/v1/orders/{id}/` | Bearer |
+| GET, PATCH | `/api/v1/orders/{id}/` | Bearer |
 | POST | `/api/v1/payments/initiate/` | Bearer |
 | GET | `/api/v1/payments/callback/` | Public (gateway redirect) |
 | POST | `/api/v1/payments/verify/` | Bearer |
@@ -222,7 +226,8 @@ records are exposed; inactive or unknown IDs return `404`.
 
 ### GET /products/
 
-Paginated. Filters:
+Paginated with a fixed 8 products per page (`?page=<n>`; follow the `next`
+URL, which preserves every filter). Filters:
 
 | Parameter | Effect |
 | --- | --- |
@@ -257,7 +262,39 @@ Product object:
 
 ### GET /products/{id}/
 
-`200` with one product object; `404` for unknown or inactive products.
+`200` with one product object plus an `options` array (the active
+attributes of the product's reference subcategory); `404` for unknown or
+inactive products.
+
+The reference subcategory is chosen explicitly with `?subcategory=<id>`
+(verified against the product's assignments) or resolved safely: a
+product with one subcategory uses it; with several subcategories the only
+one that defines active attributes wins; if several define attributes,
+`400` `{"subcategory": "…"}` is returned instead of guessing.
+
+Option object inside `options`:
+
+```json
+{
+  "id": 10,
+  "key": "car_type",
+  "label": "نوع خودرو",
+  "type": "select",
+  "required": true,
+  "choices": [
+    {"id": 1, "key": "sedan", "label": "سواری", "price_delta": "0"},
+    {"id": 2, "key": "offroad", "label": "آفرود", "price_delta": "200000"}
+  ]
+}
+```
+
+Text attributes carry `"type": "text"` and `"price_delta": "0"` instead of
+`choices`. The two supported input types are `select` and `text`;
+attributes such as `car_type` (select) and `car_model` (text) are
+independent rows managed in Django Admin per subcategory — the admin
+enables/disables them, marks them required, and configures every choice's
+`price_delta` (Toman). Inactive attributes never appear. Invalid, foreign,
+or ambiguous `?subcategory` values return `400` `{"subcategory": "<reason>"}`.
 
 ### GET /categories/
 
@@ -327,7 +364,20 @@ receive every order plus customer and payment fields. Order object:
       "unit_price": "100000",
       "quantity": 2,
       "surcharge_percent": "30.00",
-      "total_price": "200000"
+      "total_price": "200000",
+      "options": [
+        {
+          "attribute_id": 10,
+          "attribute_key": "car_type",
+          "attribute_label": "نوع خودرو",
+          "input_type": "select",
+          "choice_id": 2,
+          "choice_key": "offroad",
+          "choice_label": "آفرود",
+          "text_value": "",
+          "price_delta": "200000"
+        }
+      ]
     }
   ],
   "custom_design": null,
@@ -339,6 +389,12 @@ receive every order plus customer and payment fields. Order object:
 
 - `payment_status` is the newest payment's status (`pending`, `success`,
   `failed`) or `null`.
+- `options` on each item is an array of immutable purchase-time option
+  snapshots (`attribute_id`, `attribute_key`, `attribute_label`,
+  `input_type`, `choice_id`, `choice_key`, `choice_label`, `text_value`,
+  `price_delta`; `choice_id`/`choice_key`/`choice_label` are empty for text
+  options) or `[]`. Historical orders keep these values even after the
+  current attribute/choice definitions are edited or deactivated.
 - `custom_design` is `null`, or an object
   `{ "description", "surcharge_percent", "status", "order_items": [ids], "images": [{"position", "image"}], "created_at" }`.
   Design statuses are `pending`, `in_review`, `approved`, `rejected`,
@@ -351,26 +407,67 @@ receive every order plus customer and payment fields. Order object:
 
 `200` with one order (owner or staff); `404` for another user's order.
 
+### PATCH /orders/{id}/
+
+Cart-sync replacement: `{"items": [...]}` (same item shape as
+`POST /orders/`, including optional `subcategory_id` and
+`selected_options`) replaces the order's entire item list — include an
+item to add it or change its quantity, omit it to remove it. Only
+`pending` orders without a custom design can be edited; `200` returns the
+updated order and `400` reports the reason, in which case the order is
+left unchanged.
+
 ### POST /orders/
 
 Requires a complete profile and at least one address. JSON body:
 
 ```json
-{"items": [{"product_id": 1, "quantity": 2}], "address_id": 3}
+{
+  "items": [
+    {
+      "product_id": 15,
+      "quantity": 1,
+      "subcategory_id": 2,
+      "selected_options": [
+        {"option_id": 10, "choice_id": 2},
+        {"option_id": 11, "value": "پژو ۲۰۷"}
+      ]
+    }
+  ],
+  "address_id": 3
+}
 ```
 
 | Field | Rules |
 | --- | --- |
 | `items` | Required, at least one entry; `product_id` must reference an active product; `quantity` is 1–99 |
+| `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
+| `items[].selected_options` | Optional list of `{"option_id": <attribute id from the product detail options>, "choice_id": <choice id>}` for `select` attributes, or `{"option_id": <id>, "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters) |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
 
-Prices and the shipping address are snapshotted at purchase time. Duplicate
-lines are not merged and stock is never decremented.
+Option validation is fully generic (nothing is hardcoded per attribute
+key): every active required attribute of the reference subcategory must be
+submitted and optional ones may be omitted; attributes must be active and
+belong to the reference subcategory; choices must belong to the submitted
+attribute; `select` attributes reject text values, `text` attributes
+reject choice ids; duplicate submissions for one attribute, unknown
+fields (including client-supplied prices), and invalid types are
+rejected. Client-supplied prices are never trusted.
+
+Pricing is backend-only:
+`unit_price = product base price + sum(selected choices' price_delta)`,
+`item total = unit price × quantity`; the order total keeps the existing
+rules (the custom-design surcharge multiplies the item price when
+applied). Deltas are read from the database at creation time. Every
+selected option is saved as an immutable snapshot on the order item (see
+the order object above), and payment initiation charges the calculated
+order total. Prices and the shipping address are snapshotted at purchase
+time. Duplicate lines are not merged and stock is never decremented.
 
 | Status | Response |
 | --- | --- |
 | `201` | The created order object (staff get the staff shape) |
-| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, or field errors under `items` |
+| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 99 is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
 | `404` | Foreign `address_id` |
 
 Custom-design checkout uses `multipart/form-data`:

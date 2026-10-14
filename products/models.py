@@ -114,6 +114,46 @@ class Product(TimestampedModel):
             )
 
 
+def resolve_reference_subcategory(product, requested_id=None):
+    """The subcategory whose attributes apply to a product (never guessed).
+
+    - An explicit ``requested_id`` must be one of the product's active
+      subcategories (ValueError otherwise).
+    - A product with a single subcategory uses that one.
+    - With several subcategories: the only one that defines active
+      attributes wins; if none define any, there are no options (None);
+      if several define attributes, that is ambiguous (ValueError) and
+      the caller must resolve it explicitly.
+    """
+    subcategories = list(product.subcategories.filter(is_active=True))
+    if requested_id is not None and requested_id != "":
+        try:
+            requested_id = int(requested_id)
+        except (TypeError, ValueError):
+            raise ValueError("subcategory must be a subcategory id.")
+        for subcategory in subcategories:
+            if subcategory.pk == requested_id:
+                return subcategory
+        raise ValueError("This product does not belong to the requested subcategory.")
+    if len(subcategories) == 1:
+        return subcategories[0]
+    if not subcategories:
+        return None
+    with_attributes = [
+        subcategory
+        for subcategory in subcategories
+        if subcategory.attributes.filter(is_active=True).exists()
+    ]
+    if not with_attributes:
+        return None
+    if len(with_attributes) == 1:
+        return with_attributes[0]
+    raise ValueError(
+        "This product belongs to multiple subcategories with attributes; "
+        "specify ?subcategory=<id>."
+    )
+
+
 class BestSeller(models.Model):
     """A product manually curated by staff for the 'Best Sellers' showcase.
 
@@ -137,4 +177,83 @@ class BestSeller(models.Model):
         verbose_name_plural = "best sellers"
 
     def __str__(self):
+        return f"#{self.position} {self.product.name}"
+
+
+class ProductAttribute(TimestampedModel):
+    """A generic product option defined at the subcategory level.
+
+    All active products of a subcategory share the same attribute
+    definitions (for example a "car type" select attribute and an
+    independent "car model" text attribute). Attributes are managed in
+    Django Admin; nothing is hardcoded per product or per key.
+    """
+
+    INPUT_SELECT = "select"
+    INPUT_TEXT = "text"
+    INPUT_TYPE_CHOICES = [
+        (INPUT_SELECT, "Select"),
+        (INPUT_TEXT, "Text"),
+    ]
+
+    subcategory = models.ForeignKey(
+        Subcategory,
+        on_delete=models.CASCADE,
+        related_name="attributes",
+        verbose_name="Subcategory",
+    )
+    key = models.CharField(
+        "Key", max_length=64, help_text="Stable API identifier (e.g. car_type)."
+    )
+    name = models.CharField("Name", max_length=120, help_text="Display name (e.g. نوع خودرو).")
+    input_type = models.CharField("Input type", max_length=10, choices=INPUT_TYPE_CHOICES)
+    is_required = models.BooleanField("Required", default=False)
+    is_active = models.BooleanField("Active", default=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("subcategory", "key"), name="uniq_attribute_key_per_subcategory"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.subcategory} / {self.key}"
+
+
+class AttributeChoice(TimestampedModel):
+    """One selectable option of a `select` attribute, with its price delta.
+
+    ``price_delta`` is added to the product's base price when a customer
+    picks this choice (Toman, same convention as Product.price; the admin
+    configures the amount - never business logic). Negative deltas are
+    rejected at the database level.
+    """
+
+    attribute = models.ForeignKey(
+        ProductAttribute,
+        on_delete=models.CASCADE,
+        related_name="choices",
+        verbose_name="Attribute",
+    )
+    key = models.CharField("Key", max_length=64, help_text="Stable API identifier (e.g. offroad).")
+    label = models.CharField("Label", max_length=120, help_text="Display label (e.g. آفرود).")
+    price_delta = models.DecimalField("Price delta (Toman)", max_digits=12, decimal_places=0, default=0)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("attribute", "key"), name="uniq_choice_key_per_attribute"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(price_delta__gte=0),
+                name="attribute_choice_delta_non_negative",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.attribute.key}: {self.key}"
+
         return f"#{self.position} {self.product.name}"

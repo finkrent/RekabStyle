@@ -1,15 +1,30 @@
 from django.db.models import Prefetch, Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from products.models import Category, Product, Subcategory
+from products.models import Category, Product, Subcategory, resolve_reference_subcategory
 from products.serializers import (
     CategorySerializer,
+    ProductDetailSerializer,
     ProductSerializer,
     SubcategoryDetailSerializer,
     SubcategorySerializer,
 )
+
+
+class ProductPagination(PageNumberPagination):
+    """Fixed-size catalog paging: 8 products per page.
+
+    The page size is fixed server-side (clients cannot override it through
+    query parameters); DRF's page links carry the original query string,
+    so filters such as ?subcategory= stay active on every page.
+    """
+
+    page_size = 8
+    page_size_query_param = None
 
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
@@ -21,22 +36,55 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     serializer_class = ProductSerializer
+    pagination_class = ProductPagination
 
     def get_queryset(self):
         queryset = Product.objects.filter(is_active=True).prefetch_related(
             "categories", "subcategories"
         )
-        params = self.request.query_params
-        category = params.get("category")
-        subcategory = params.get("subcategory")
-        search = params.get("q", "").strip()
-        if category:
-            queryset = queryset.filter(categories__id=category).distinct()
-        if subcategory:
-            queryset = queryset.filter(subcategories__id=subcategory).distinct()
-        if search:
-            queryset = queryset.filter(Q(name__icontains=search) | Q(description__icontains=search))
-        return queryset
+        # Query-parameter filters apply to the catalog list; the detail
+        # view resolves its own reference subcategory (?subcategory= is
+        # validated there instead of filtering the queryset).
+        if self.action == "list":
+            params = self.request.query_params
+            category = params.get("category")
+            subcategory = params.get("subcategory")
+            search = params.get("q", "").strip()
+            if category:
+                queryset = queryset.filter(categories__id=category).distinct()
+            if subcategory and subcategory.isdigit():
+                queryset = queryset.filter(subcategories__id=subcategory).distinct()
+            elif subcategory:
+                queryset = queryset.none()
+            if search:
+                queryset = queryset.filter(Q(name__icontains=search) | Q(description__icontains=search))
+        # Stable ordering: created_at alone may tie, which lets rows
+        # duplicate or disappear between sequential pages.
+        return queryset.order_by("-created_at", "-id")
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return ProductDetailSerializer
+        return ProductSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        product = self.get_object()
+        serializer = self.get_serializer(
+            product,
+            context={"reference_subcategory": self._reference_subcategory(product)},
+        )
+        return Response(serializer.data)
+
+    def _reference_subcategory(self, product):
+        """Resolve the subcategory whose attributes apply to this detail
+        through the shared, never-guessing resolver (see
+        products.models.resolve_reference_subcategory)."""
+        try:
+            return resolve_reference_subcategory(
+                product, self.request.query_params.get("subcategory")
+            )
+        except ValueError as exc:
+            raise ValidationError({"subcategory": str(exc)})
 
 
 class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):

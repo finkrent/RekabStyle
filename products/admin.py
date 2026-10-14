@@ -1,7 +1,14 @@
 ﻿from django import forms
 from django.contrib import admin
 
-from products.models import BestSeller, Category, Product, Subcategory
+from products.models import (
+    AttributeChoice,
+    BestSeller,
+    Category,
+    Product,
+    ProductAttribute,
+    Subcategory,
+)
 
 
 class SubcategoryInline(admin.TabularInline):
@@ -35,6 +42,13 @@ class CategoryAdmin(admin.ModelAdmin):
     inlines = [SubcategoryInline]
 
 
+class ProductAttributeInline(admin.TabularInline):
+    """Attributes managed directly on the subcategory admin page."""
+
+    model = ProductAttribute
+    extra = 1
+
+
 @admin.register(Subcategory)
 class SubcategoryAdmin(admin.ModelAdmin):
     fields = ("category", "name", "slug", "is_active")
@@ -42,6 +56,7 @@ class SubcategoryAdmin(admin.ModelAdmin):
     list_filter = ("category", "is_active")
     search_fields = ("name",)
     list_select_related = ("category",)
+    inlines = [ProductAttributeInline]
 
 
 @admin.register(Product)
@@ -85,3 +100,22 @@ class BestSellerAdmin(admin.ModelAdmin):
     autocomplete_fields = ("product",)
     ordering = ("position", "-created_at")
     list_select_related = ("product",)
+
+
+class AttributeChoiceInline(admin.TabularInline):
+    """Choices of one attribute: key, label, and the admin-set price delta."""
+
+    model = AttributeChoice
+    extra = 1
+
+
+@admin.register(ProductAttribute)
+class ProductAttributeAdmin(admin.ModelAdmin):
+    """Generic subcategory attributes: enable/disable, required flag,
+    input type, and their selectable choices."""
+
+    list_display = ("key", "name", "subcategory", "input_type", "is_required", "is_active")
+    list_filter = ("input_type", "is_required", "is_active", "subcategory")
+    search_fields = ("key", "name", "subcategory__name")
+    list_select_related = ("subcategory",)
+    inlines = [AttributeChoiceInline]

@@ -40,17 +40,52 @@ never convert them to Rial.
 
 ## Requests
 
-Normal checkout is JSON:
+### Catalog
+
+`GET /products/` returns 8 products per page. Follow the returned `next` URL
+(it keeps the `?subcategory=`/`?q=` filters) and treat `next: null` as the
+last page; `?page_size=` is not supported. `GET /products/{id}/` returns an
+`options` array — the active attributes of the product's reference
+subcategory. `select` options carry `choices` (each with a `price_delta`
+added to the product price); `text` options carry `"price_delta": "0"` and
+your own `value`. Products assigned to several subcategories need an
+explicit `?subcategory=<id>` on the detail call.
+
+### Checkout (normal, JSON)
 
 ```js
 const order = await api("/orders/", {
   method: "POST",
   body: JSON.stringify({
-    items: [{ product_id: 1, quantity: 2 }],
+    items: [
+      {
+        product_id: 15,
+        quantity: 2,
+        subcategory_id: 2,
+        selected_options: [
+          { option_id: 10, choice_id: 2 },
+          { option_id: 11, value: "پژو ۲۰۷" },
+        ],
+      },
+    ],
     address_id: 3,
   }),
 });
 ```
+
+`option_id`/`choice_id` are the numeric ids from the product detail
+`options`. `subcategory_id` and `selected_options` are optional; required
+attributes (per the product detail response) must all be submitted.
+
+### Cart updates
+
+To change a pending order without creating a new one, send
+`PATCH /orders/{id}/` with the full `items` list (same shape as checkout):
+include an item to add it or change its quantity, omit it to remove it. The
+response is the updated order; only pending orders without a custom design
+can be edited.
+
+### Custom design (multipart)
 
 Custom design requires `FormData`. Do not set `Content-Type` manually:
 

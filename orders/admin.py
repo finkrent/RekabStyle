@@ -1,6 +1,6 @@
 ﻿from django.contrib import admin
 
-from orders.models import CustomDesign, CustomDesignImage, Order, OrderItem
+from orders.models import CustomDesign, CustomDesignImage, Order, OrderItem, OrderItemOption
 from payments.models import Payment
 
 
@@ -64,3 +64,28 @@ class CustomDesignAdmin(admin.ModelAdmin):
     search_fields = ("order__order_number", "order__user__phone_number")
     readonly_fields = ("order", "surcharge_percent", "created_at")
     inlines = [CustomDesignImageInline]
+
+
+@admin.register(OrderItemOption)
+class OrderItemOptionAdmin(admin.ModelAdmin):
+    """Read-only audit view of the immutable per-item option snapshots.
+
+    Purchase-time keys, labels, text values, and deltas must never be
+    edited or deleted (historical orders depend on them), so all write
+    paths are disabled.
+    """
+
+    list_display = ("item", "attribute_key", "choice_key", "text_value", "price_delta")
+    list_filter = ("input_type",)
+    search_fields = ("attribute_key", "choice_key", "item__order__order_number")
+    list_select_related = ("item", "item__order")
+    readonly_fields = tuple(field.name for field in OrderItemOption._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

@@ -5,9 +5,23 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from accounts.models import Address
-from orders.models import CustomDesign, CustomDesignImage, Order, OrderItem
+from orders.models import (
+    CustomDesign,
+    CustomDesignImage,
+    Order,
+    OrderItem,
+    OrderItemOption,
+)
 from payments.models import Payment
-from products.models import Product
+from products.models import (
+    Product,
+    ProductAttribute,
+    Subcategory,
+    resolve_reference_subcategory,
+)
+
+# Maximum length accepted for a text attribute's value in an order payload.
+OPTION_TEXT_MAX_LENGTH = 200
 
 
 class PaymentSummarySerializer(serializers.ModelSerializer):
@@ -16,7 +30,30 @@ class PaymentSummarySerializer(serializers.ModelSerializer):
         fields = ["id", "amount", "status", "authority", "paid_at", "created_at"]
 
 
+class OrderItemOptionSerializer(serializers.ModelSerializer):
+    """Immutable purchase-time snapshot of one selected product option."""
+
+    attribute_id = serializers.IntegerField(read_only=True, allow_null=True)
+    choice_id = serializers.IntegerField(read_only=True, allow_null=True)
+
+    class Meta:
+        model = OrderItemOption
+        fields = [
+            "attribute_id",
+            "attribute_key",
+            "attribute_label",
+            "input_type",
+            "choice_id",
+            "choice_key",
+            "choice_label",
+            "text_value",
+            "price_delta",
+        ]
+
+
 class OrderItemSerializer(serializers.ModelSerializer):
+    options = OrderItemOptionSerializer(many=True, read_only=True)
+
     class Meta:
         model = OrderItem
         fields = [
@@ -27,6 +64,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "quantity",
             "surcharge_percent",
             "total_price",
+            "options",
         ]
 
 
@@ -76,7 +114,9 @@ class OrderSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_payment_status(self, obj):
-        latest = obj.payments.order_by("-created_at").first()
+        # Payments are prefetched; Payment.Meta orders newest first, so the
+        # prefetched list starts with the latest payment (no per-order query).
+        latest = next(iter(obj.payments.all()), None)
         return latest.status if latest else None
 
     @extend_schema_field(CustomDesignSerializer(allow_null=True))
@@ -107,10 +147,232 @@ class AdminOrderSerializer(OrderSerializer):
 
 
 class OrderItemInputSerializer(serializers.Serializer):
+    """One line of an order payload.
+
+    `subcategory_id` selects the reference subcategory whose attributes
+    apply to this item. Optional `selected_options` is a list of
+    {"option_id": <attribute id>, "choice_id" | "value": ...} entries.
+    Attribute validation engages when `subcategory_id` or
+    `selected_options` is present; legacy payloads without either keep
+    their original behavior.
+    """
+
     product_id = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.filter(is_active=True), source="product"
     )
     quantity = serializers.IntegerField(min_value=1, max_value=99)
+    subcategory_id = serializers.PrimaryKeyRelatedField(
+        queryset=Subcategory.objects.filter(is_active=True),
+        source="subcategory",
+        required=False,
+        allow_null=True,
+    )
+    selected_options = serializers.JSONField(required=False, allow_null=True)
+
+    def validate_selected_options(self, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                raise serializers.ValidationError(
+                    "selected_options must be a JSON array of option objects."
+                )
+        if not isinstance(value, list):
+            raise serializers.ValidationError(
+                "selected_options must be a JSON array of option objects."
+            )
+        return value
+
+    def validate(self, attrs):
+        product = attrs.get("product")
+        subcategory = attrs.get("subcategory")
+        raw_options = attrs.get("selected_options") or []
+
+        if subcategory is not None and not product.subcategories.filter(
+            pk=subcategory.pk, is_active=True
+        ).exists():
+            raise serializers.ValidationError(
+                {"subcategory_id": "This product does not belong to the given subcategory."}
+            )
+
+        if subcategory is None and not raw_options:
+            # Legacy payload: no attributes involved.
+            attrs["options"] = []
+            return attrs
+
+        if subcategory is None:
+            try:
+                subcategory = resolve_reference_subcategory(product)
+            except ValueError as exc:
+                raise serializers.ValidationError({"subcategory_id": str(exc)})
+            if subcategory is None:
+                raise serializers.ValidationError(
+                    {
+                        "subcategory_id": (
+                            "A reference subcategory is required to submit "
+                            "selected_options for this product."
+                        )
+                    }
+                )
+            attrs["subcategory"] = subcategory
+
+        attributes = {
+            attribute.pk: attribute
+            for attribute in subcategory.attributes.filter(is_active=True).prefetch_related(
+                "choices"
+            )
+        }
+        if not attributes and raw_options:
+            raise serializers.ValidationError(
+                {
+                    "selected_options": (
+                        "The reference subcategory defines no active attributes."
+                    )
+                }
+            )
+
+        choices_by_id = {}
+        for attribute in attributes.values():
+            for choice in attribute.choices.all():
+                choices_by_id[(attribute.pk, choice.pk)] = choice
+
+        seen = set()
+        options = []
+        for raw in raw_options:
+            if not isinstance(raw, dict):
+                raise serializers.ValidationError(
+                    {"selected_options": "Each option must be an object."}
+                )
+            unknown = set(raw) - {"option_id", "choice_id", "value"}
+            if unknown:
+                raise serializers.ValidationError(
+                    {"selected_options": f"Unexpected option fields: {sorted(unknown)}."}
+                )
+            try:
+                option_id = int(raw.get("option_id"))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"selected_options": "option_id must be an attribute id."}
+                )
+            if option_id in seen:
+                raise serializers.ValidationError(
+                    {
+                        "selected_options": (
+                            f"Duplicate submission for attribute {option_id}."
+                        )
+                    }
+                )
+            seen.add(option_id)
+            attribute = attributes.get(option_id)
+            if attribute is None:
+                raise serializers.ValidationError(
+                    {
+                        "selected_options": (
+                            f"Attribute {option_id} is unknown, inactive, or not "
+                            "part of the reference subcategory."
+                        )
+                    }
+                )
+
+            if attribute.input_type == ProductAttribute.INPUT_SELECT:
+                if raw.get("value") not in (None, ""):
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Attribute '{attribute.key}' is a select attribute; "
+                                "submit a choice_id instead of a text value."
+                            )
+                        }
+                    )
+                try:
+                    choice_id = int(raw.get("choice_id"))
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Attribute '{attribute.key}' requires a valid choice_id."
+                            )
+                        }
+                    )
+                choice = choices_by_id.get((attribute.pk, choice_id))
+                if choice is None:
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Choice {choice_id} is not available for "
+                                f"attribute '{attribute.key}'."
+                            )
+                        }
+                    )
+                options.append({"attribute": attribute, "choice": choice, "value": ""})
+            else:
+                if raw.get("choice_id") not in (None, ""):
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Attribute '{attribute.key}' is a text attribute; "
+                                "submit a value instead of a choice_id."
+                            )
+                        }
+                    )
+                value = raw.get("value")
+                if not isinstance(value, str) or not value.strip():
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Attribute '{attribute.key}' requires a non-empty "
+                                "text value."
+                            )
+                        }
+                    )
+                if len(value.strip()) > OPTION_TEXT_MAX_LENGTH:
+                    raise serializers.ValidationError(
+                        {
+                            "selected_options": (
+                                f"Attribute '{attribute.key}' value must be at most "
+                                f"{OPTION_TEXT_MAX_LENGTH} characters."
+                            )
+                        }
+                    )
+                options.append(
+                    {"attribute": attribute, "choice": None, "value": value.strip()}
+                )
+
+        selected_ids = {option["attribute"].pk for option in options}
+        missing = [
+            attribute.name
+            for attribute in attributes.values()
+            if attribute.is_required and attribute.pk not in selected_ids
+        ]
+        if missing:
+            raise serializers.ValidationError(
+                {"selected_options": f"Required attributes missing: {', '.join(missing)}."}
+            )
+
+        attrs["options"] = options
+        return attrs
+
+
+def _parse_items(value):
+    """Decode and validate a submitted `items` payload.
+
+    JSON bodies send a real list; multipart bodies send a JSON string.
+    Returns the validated [{"product": <Product>, "quantity": int}, ...] list.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            raise serializers.ValidationError(
+                "items must be a JSON array of {product_id, quantity} objects."
+            )
+    if not isinstance(value, list) or not value:
+        raise serializers.ValidationError("An order must contain at least one item.")
+    inner = OrderItemInputSerializer(data=value, many=True)
+    inner.is_valid(raise_exception=True)
+    return inner.validated_data
 
 
 class OrderCreateSerializer(serializers.Serializer):
@@ -149,18 +411,7 @@ class OrderCreateSerializer(serializers.Serializer):
     )
 
     def validate_items(self, value):
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                raise serializers.ValidationError(
-                    "items must be a JSON array of {product_id, quantity} objects."
-                )
-        if not isinstance(value, list) or not value:
-            raise serializers.ValidationError("An order must contain at least one item.")
-        inner = OrderItemInputSerializer(data=value, many=True)
-        inner.is_valid(raise_exception=True)
-        return inner.validated_data
+        return _parse_items(value)
 
     def validate_custom_design_product_ids(self, value):
         if value in (None, ""):
@@ -216,3 +467,19 @@ class OrderCreateSerializer(serializers.Serializer):
                     }
                 )
         return attrs
+
+
+class OrderUpdateSerializer(serializers.Serializer):
+    """Replacement item list for PATCH /api/v1/orders/{id}/ (cart-sync).
+
+    The submitted list becomes the order's entire item set: include an
+    item to add it or change its quantity, omit it to remove it. Works
+    with both `application/json` and multipart bodies (items arrives as
+    a JSON string in multipart, same as OrderCreateSerializer).
+    """
+
+    items = serializers.JSONField()
+
+    def validate_items(self, value):
+        return _parse_items(value)
+

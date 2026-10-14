@@ -164,3 +164,46 @@ class CustomDesignImage(models.Model):
 
     def __str__(self):
         return f"Image #{self.position} of {self.design}"
+
+
+class OrderItemOption(models.Model):
+    """Immutable snapshot of one selected product option on an order item.
+
+    Keys, labels, the text value, and the applied price delta are copied at
+    purchase time so historical orders stay correct after administrators
+    edit or deactivate the current attribute/choice definitions. The FK
+    references use SET_NULL to preserve history even if a definition row
+    is deleted.
+    """
+
+    item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name="options")
+    attribute = models.ForeignKey(
+        "products.ProductAttribute",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="+",
+        verbose_name="Attribute",
+    )
+    attribute_key = models.CharField("Attribute key", max_length=64)
+    attribute_label = models.CharField("Attribute label", max_length=120)
+    input_type = models.CharField("Input type", max_length=10)
+    choice = models.ForeignKey(
+        "products.AttributeChoice",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="Choice",
+    )
+    choice_key = models.CharField("Choice key", max_length=64, blank=True)
+    choice_label = models.CharField("Choice label", max_length=120, blank=True)
+    text_value = models.TextField("Text value", blank=True, default="")
+    price_delta = models.DecimalField(
+        "Applied price delta (Toman)", max_digits=12, decimal_places=0, default=0
+    )
+
+    class Meta:
+        ordering = ("id",)
+
+    def __str__(self):
+        return f"{self.attribute_key}: {self.choice_key or self.text_value}"
