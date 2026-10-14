@@ -1,10 +1,11 @@
 from django.db.models import Prefetch, Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from products.models import Category, Product, Subcategory
+from products.models import Category, Product, Subcategory, resolve_reference_subcategory
 from products.serializers import (
     CategorySerializer,
     ProductDetailSerializer,
@@ -49,8 +50,12 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             category = params.get("category")
             subcategory = params.get("subcategory")
             search = params.get("q", "").strip()
-            if category:
+            # Non-numeric filter values match nothing instead of crashing
+            # the ORM with a ValueError (which would surface as a 500).
+            if category and category.isdigit():
                 queryset = queryset.filter(categories__id=category).distinct()
+            elif category:
+                queryset = queryset.none()
             if subcategory and subcategory.isdigit():
                 queryset = queryset.filter(subcategories__id=subcategory).distinct()
             elif subcategory:
@@ -65,6 +70,27 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == "retrieve":
             return ProductDetailSerializer
         return ProductSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        product = self.get_object()
+        context = self.get_serializer_context()
+        context["reference_subcategory"] = self._reference_subcategory(product)
+        serializer = self.get_serializer(
+            product,
+            context=context,
+        )
+        return Response(serializer.data)
+
+    def _reference_subcategory(self, product):
+        """Resolve the subcategory whose attributes apply to this detail
+        through the shared, never-guessing resolver (see
+        products.models.resolve_reference_subcategory)."""
+        try:
+            return resolve_reference_subcategory(
+                product, self.request.query_params.get("subcategory")
+            )
+        except ValueError as exc:
+            raise ValidationError({"subcategory": str(exc)})
 
 
 class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -89,8 +115,11 @@ class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             )
         category = self.request.query_params.get("category")
-        if category:
+        # Non-numeric values match nothing instead of crashing the ORM.
+        if category and category.isdigit():
             queryset = queryset.filter(category_id=category)
+        elif category:
+            queryset = queryset.none()
         return queryset
 
 

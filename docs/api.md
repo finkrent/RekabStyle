@@ -262,12 +262,15 @@ Product object:
 
 ### GET /products/{id}/
 
-`200` with one product object plus an `options` array — the active
-attributes configured for **that product** in the admin; `404` for unknown
-or inactive products. Definitions are per product (two products in the
-same subcategory can expose different options), so the `?subcategory=`
-query parameter is not used on the detail endpoint (it still filters the
-product list). A product without attributes returns `"options": []`.
+`200` with one product object plus an `options` array (the active
+attributes of the product's reference subcategory); `404` for unknown or
+inactive products.
+
+The reference subcategory is chosen explicitly with `?subcategory=<id>`
+(verified against the product's assignments) or resolved safely: a
+product with one subcategory uses it; with several subcategories the only
+one that defines active attributes wins; if several define attributes,
+`400` `{"subcategory": "…"}` is returned instead of guessing.
 
 Option object inside `options`:
 
@@ -288,10 +291,10 @@ Option object inside `options`:
 Text attributes carry `"type": "text"` and `"price_delta": "0"` instead of
 `choices`. The two supported input types are `select` and `text`;
 attributes such as `car_type` (select) and `car_model` (text) are
-independent rows managed in Django Admin on each product page
-(Products → open the product → Attributes; open an attribute to edit its
-choices and their `price_delta`, Toman). Inactive attributes never
-appear.
+independent rows managed in Django Admin per subcategory — the admin
+enables/disables them, marks them required, and configures every choice's
+`price_delta` (Toman). Inactive attributes never appear. Invalid, foreign,
+or ambiguous `?subcategory` values return `400` `{"subcategory": "<reason>"}`.
 
 ### GET /categories/
 
@@ -438,15 +441,14 @@ Requires a complete profile and at least one address. JSON body:
 | Field | Rules |
 | --- | --- |
 | `items` | Required, at least one entry; `product_id` must reference an active product; `quantity` is 1–99 |
-| `items[].subcategory_id` | Optional hint; when provided it must be an active subcategory the product belongs to. Attributes are always resolved from the product itself, so it is not required for options |
+| `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
 | `items[].selected_options` | Optional list of `{"option_id": <attribute id from the product detail options>, "choice_id": <choice id>}` for `select` attributes, or `{"option_id": <id>, "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters) |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
 
 Option validation is fully generic (nothing is hardcoded per attribute
-key): attributes come from the product itself, and every active required
-attribute of the product must be submitted while optional ones may be
-omitted; submitted attributes must be active and belong to that product;
-choices must belong to the submitted
+key): every active required attribute of the reference subcategory must be
+submitted and optional ones may be omitted; attributes must be active and
+belong to the reference subcategory; choices must belong to the submitted
 attribute; `select` attributes reject text values, `text` attributes
 reject choice ids; duplicate submissions for one attribute, unknown
 fields (including client-supplied prices), and invalid types are

@@ -38,16 +38,19 @@ Checkout locks product rows and validates prices server-side. It does not merge
 duplicate lines or decrement stock. Custom designs are one-to-one with orders,
 link selected items, and store re-encoded Pillow images under `designs/YYYY/MM/`.
 
-Product attributes (options) are defined generically per product in Django
-Admin (each product's admin page carries an Attributes inline; choices and
-their price deltas are edited on the attribute's own page):
-`ProductAttribute` (stable key, display name, `select`/`text` input
+Product attributes (options) are defined generically per subcategory in Django
+Admin: `ProductAttribute` (stable key, display name, `select`/`text` input
 type, required/active flags) with `AttributeChoice` rows carrying admin-set
 `price_delta` amounts. Checkout validates submitted selections against the
-product's active definitions, adds choice deltas to the backend-computed price
+active definitions, adds choice deltas to the backend-computed price
 (`unit_price = base + sum(deltas)`), and stores immutable per-item snapshots
 (`OrderItemOption` keys, labels, text values, and applied deltas) that keep
 historical orders correct after later definition edits or deactivation.
+To configure them, open **Subcategories** in Django Admin and edit the target
+subcategory. Add a row in **Attributes**, save it, then use **Manage choices**
+on that row to add each choice's key, display label, and price delta. Choices
+apply only to `select` attributes; `text` attributes accept customer-entered
+values and have no configured choices.
 
 ## Payment and notification flow
 

@@ -1,5 +1,7 @@
 ﻿from django import forms
 from django.contrib import admin
+from django.urls import reverse
+from django.utils.html import format_html
 
 from products.models import (
     AttributeChoice,
@@ -43,12 +45,28 @@ class CategoryAdmin(admin.ModelAdmin):
 
 
 class ProductAttributeInline(admin.TabularInline):
-    """Attributes managed directly on the product admin page (each product
-    carries its own definitions; choices are edited on the attribute's
-    own change page)."""
+    """Attributes managed directly on the subcategory admin page."""
 
     model = ProductAttribute
+    fields = (
+        "key",
+        "name",
+        "input_type",
+        "is_required",
+        "is_active",
+        "choices_link",
+    )
+    readonly_fields = ("choices_link",)
     extra = 1
+
+    @admin.display(description="Choices")
+    def choices_link(self, obj):
+        if not obj or not obj.pk:
+            return "Save the attribute first"
+        if obj.input_type != ProductAttribute.INPUT_SELECT:
+            return "Select attributes only"
+        url = reverse("admin:products_productattribute_change", args=(obj.pk,))
+        return format_html('<a href="{}">Manage choices</a>', url)
 
 
 @admin.register(Subcategory)
@@ -58,6 +76,7 @@ class SubcategoryAdmin(admin.ModelAdmin):
     list_filter = ("category", "is_active")
     search_fields = ("name",)
     list_select_related = ("category",)
+    inlines = [ProductAttributeInline]
 
 
 @admin.register(Product)
@@ -81,7 +100,6 @@ class ProductAdmin(admin.ModelAdmin):
     list_editable = ("price", "is_active")
     readonly_fields = ("created_at", "updated_at")
     filter_horizontal = ("categories", "subcategories")
-    inlines = [ProductAttributeInline]
 
     @admin.display(description="Categories")
     def categories_summary(self, obj):
@@ -113,11 +131,11 @@ class AttributeChoiceInline(admin.TabularInline):
 
 @admin.register(ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
-    """Per-product attributes: enable/disable, required flag, input type,
-    and their selectable choices."""
+    """Generic subcategory attributes: enable/disable, required flag,
+    input type, and their selectable choices."""
 
-    list_display = ("key", "name", "product", "input_type", "is_required", "is_active")
-    list_filter = ("input_type", "is_required", "is_active", "product")
-    search_fields = ("key", "name", "product__name")
-    list_select_related = ("product",)
+    list_display = ("key", "name", "subcategory", "input_type", "is_required", "is_active")
+    list_filter = ("input_type", "is_required", "is_active", "subcategory")
+    search_fields = ("key", "name", "subcategory__name")
+    list_select_related = ("subcategory",)
     inlines = [AttributeChoiceInline]

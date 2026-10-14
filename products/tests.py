@@ -6,7 +6,7 @@ from django.db import IntegrityError
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
-from products.admin import ProductAdminForm
+from products.admin import ProductAdminForm, ProductAttributeInline
 from products.models import AttributeChoice, BestSeller, Category, Product, ProductAttribute, Subcategory
 
 
@@ -53,6 +53,14 @@ class ProductApiTests(TestCase):
             sorted(response.data["subcategory_names"]), ["Blenders", "Mobile Phones"]
         )
 
+    def test_product_detail_image_url_is_absolute(self):
+        self.product.image = "products/phone.jpg"
+        self.product.save(update_fields=["image"])
+
+        response = self.client.get(reverse("product-detail", args=[self.product.pk]))
+
+        self.assertTrue(response.data["image"].startswith("http://testserver/"))
+
     def test_category_filter_matches_any_category(self):
         for category in (self.electronics, self.home):
             response = self.client.get(PRODUCT_LIST_URL, {"category": category.pk})
@@ -68,6 +76,17 @@ class ProductApiTests(TestCase):
         # "Audio" exists but is not assigned to the product.
         response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.audio.pk})
         self.assertEqual(response.data["count"], 0)
+
+    def test_non_numeric_filters_match_nothing(self):
+        for parameter in ("category", "subcategory"):
+            with self.subTest(parameter=parameter):
+                response = self.client.get(PRODUCT_LIST_URL, {parameter: "not-an-id"})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["count"], 0)
+
+        response = self.client.get(SUBCATEGORY_LIST_URL, {"category": "not-an-id"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
 
     def test_unrelated_category_returns_nothing(self):
         other = Category.objects.create(name="Fashion")
@@ -303,6 +322,28 @@ class AdminSlugTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         self.assertEqual(form.save().slug, "custom-audio")
 
+    def test_subcategory_attribute_inline_links_to_choice_editor(self):
+        subcategory = Subcategory.objects.create(
+            category=self.category, name="Mobile Phones"
+        )
+        attribute = ProductAttribute.objects.create(
+            subcategory=subcategory,
+            key="color",
+            name="Color",
+            input_type=ProductAttribute.INPUT_SELECT,
+        )
+        inline = ProductAttributeInline(Subcategory, admin.site)
+
+        link = str(inline.choices_link(attribute))
+
+        self.assertIn(
+            reverse("admin:products_productattribute_change", args=[attribute.pk]),
+            link,
+        )
+        self.assertIn("Manage choices", link)
+        attribute_admin = admin.site._registry[ProductAttribute]
+        self.assertEqual(attribute_admin.inlines[0].model, AttributeChoice)
+
 
 class SubcategoryDetailProductsTests(TestCase):
     """GET /subcategories/{id}/ embeds the subcategory's active products."""
@@ -392,7 +433,7 @@ class ProductPaginationTests(TestCase):
 
 
 class ProductOptionTests(TestCase):
-    """GET /products/{id}/ exposes the product's own active attributes."""
+    """GET /products/{id}/ exposes the reference subcategory's attributes."""
 
     def setUp(self):
         self.category = Category.objects.create(name="Auto")
@@ -401,14 +442,9 @@ class ProductOptionTests(TestCase):
         self.product = Product.objects.create(name="Mat X", price=1000000)
         self.product.categories.add(self.category)
         self.product.subcategories.add(self.mats, self.covers)
-        # A second product in the SAME subcategory with no attributes:
-        # option definitions are scoped to each product, not the subcategory.
-        self.plain = Product.objects.create(name="Plain Mat", price=500000)
-        self.plain.categories.add(self.category)
-        self.plain.subcategories.add(self.mats)
 
         self.car_type = ProductAttribute.objects.create(
-            product=self.product,
+            subcategory=self.mats,
             key="car_type",
             name="نوع خودرو",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -421,14 +457,14 @@ class ProductOptionTests(TestCase):
             attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
         )
         self.car_model = ProductAttribute.objects.create(
-            product=self.product,
+            subcategory=self.mats,
             key="car_model",
             name="مدل خودرو",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=True,
         )
         self.piece_count = ProductAttribute.objects.create(
-            product=self.product,
+            subcategory=self.mats,
             key="piece_count",
             name="تعداد تکه",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -438,19 +474,18 @@ class ProductOptionTests(TestCase):
             attribute=self.piece_count, key="two_piece", label="۲ تکه", price_delta=0
         )
         self.hidden = ProductAttribute.objects.create(
-            product=self.product,
+            subcategory=self.mats,
             key="legacy",
             name="Legacy",
             input_type=ProductAttribute.INPUT_TEXT,
             is_active=False,
         )
 
-    def _detail(self, product=None, **params):
-        target = product or self.product
-        return self.client.get(reverse("product-detail", args=[target.pk]), params)
+    def _detail(self, **params):
+        return self.client.get(reverse("product-detail", args=[self.product.pk]), params)
 
     def test_options_include_select_and_text_attributes_together(self):
-        response = self._detail()
+        response = self._detail(subcategory=self.mats.pk)
         self.assertEqual(response.status_code, 200)
         options = {option["key"]: option for option in response.data["options"]}
         self.assertEqual(set(options), {"car_type", "car_model", "piece_count"})
@@ -473,27 +508,22 @@ class ProductOptionTests(TestCase):
         self.assertFalse(options["piece_count"]["required"])
 
     def test_inactive_attributes_are_not_returned(self):
-        response = self._detail()
+        response = self._detail(subcategory=self.mats.pk)
         keys = [option["key"] for option in response.data["options"]]
         self.assertNotIn("legacy", keys)
 
-    def test_attributes_are_scoped_to_each_product(self):
-        # Same subcategory, but the plain product defines no attributes of
-        # its own: options must not leak from the subcategory or siblings.
-        response = self._detail(product=self.plain)
+    def test_explicit_reference_subcategory_is_used(self):
+        response = self._detail(subcategory=self.covers.pk)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["options"], [])
 
-    def test_multi_subcategory_product_returns_its_own_options(self):
-        # The product belongs to two subcategories; its options are its own
-        # definitions and need no ?subcategory= hint.
-        response = self._detail()
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data["options"]), 3)
+    def test_foreign_subcategory_is_rejected(self):
+        foreign = Subcategory.objects.create(category=self.category, name="Other")
+        response = self._detail(subcategory=foreign.pk)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("subcategory", response.data)
 
-    def test_subcategory_query_param_is_ignored_on_detail(self):
-        # Options come from the product; ?subcategory= no longer filters or
-        # selects them on the detail endpoint.
-        response = self._detail(subcategory=self.covers.pk)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data["options"]), 3)
+    def test_invalid_subcategory_value_is_rejected(self):
+        response = self._detail(subcategory="abc")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("subcategory", response.data)
