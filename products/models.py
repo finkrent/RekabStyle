@@ -114,46 +114,6 @@ class Product(TimestampedModel):
             )
 
 
-def resolve_reference_subcategory(product, requested_id=None):
-    """The subcategory whose attributes apply to a product (never guessed).
-
-    - An explicit ``requested_id`` must be one of the product's active
-      subcategories (ValueError otherwise).
-    - A product with a single subcategory uses that one.
-    - With several subcategories: the only one that defines active
-      attributes wins; if none define any, there are no options (None);
-      if several define attributes, that is ambiguous (ValueError) and
-      the caller must resolve it explicitly.
-    """
-    subcategories = list(product.subcategories.filter(is_active=True))
-    if requested_id is not None and requested_id != "":
-        try:
-            requested_id = int(requested_id)
-        except (TypeError, ValueError):
-            raise ValueError("subcategory must be a subcategory id.")
-        for subcategory in subcategories:
-            if subcategory.pk == requested_id:
-                return subcategory
-        raise ValueError("This product does not belong to the requested subcategory.")
-    if len(subcategories) == 1:
-        return subcategories[0]
-    if not subcategories:
-        return None
-    with_attributes = [
-        subcategory
-        for subcategory in subcategories
-        if subcategory.attributes.filter(is_active=True).exists()
-    ]
-    if not with_attributes:
-        return None
-    if len(with_attributes) == 1:
-        return with_attributes[0]
-    raise ValueError(
-        "This product belongs to multiple subcategories with attributes; "
-        "specify ?subcategory=<id>."
-    )
-
-
 class BestSeller(models.Model):
     """A product manually curated by staff for the 'Best Sellers' showcase.
 
@@ -181,12 +141,13 @@ class BestSeller(models.Model):
 
 
 class ProductAttribute(TimestampedModel):
-    """A generic product option defined at the subcategory level.
+    """A generic option defined per product.
 
-    All active products of a subcategory share the same attribute
-    definitions (for example a "car type" select attribute and an
-    independent "car model" text attribute). Attributes are managed in
-    Django Admin; nothing is hardcoded per product or per key.
+    Each product carries its own attribute definitions (for example a
+    "car type" select attribute and an independent "car model" text
+    attribute), so two products in the same subcategory can expose
+    different options. Attributes are managed in Django Admin on the
+    product page; nothing is hardcoded per product or per key.
     """
 
     INPUT_SELECT = "select"
@@ -196,11 +157,11 @@ class ProductAttribute(TimestampedModel):
         (INPUT_TEXT, "Text"),
     ]
 
-    subcategory = models.ForeignKey(
-        Subcategory,
+    product = models.ForeignKey(
+        Product,
         on_delete=models.CASCADE,
-        related_name="attributes",
-        verbose_name="Subcategory",
+        related_name="options",
+        verbose_name="Product",
     )
     key = models.CharField(
         "Key", max_length=64, help_text="Stable API identifier (e.g. car_type)."
@@ -214,12 +175,12 @@ class ProductAttribute(TimestampedModel):
         ordering = ("id",)
         constraints = [
             models.UniqueConstraint(
-                fields=("subcategory", "key"), name="uniq_attribute_key_per_subcategory"
+                fields=("product", "key"), name="uniq_attribute_key_per_product"
             )
         ]
 
     def __str__(self):
-        return f"{self.subcategory} / {self.key}"
+        return f"{self.product} / {self.key}"
 
 
 class AttributeChoice(TimestampedModel):
@@ -255,5 +216,3 @@ class AttributeChoice(TimestampedModel):
 
     def __str__(self):
         return f"{self.attribute.key}: {self.key}"
-
-        return f"#{self.position} {self.product.name}"

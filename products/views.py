@@ -1,11 +1,10 @@
 from django.db.models import Prefetch, Q
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from products.models import Category, Product, Subcategory, resolve_reference_subcategory
+from products.models import Category, Product, Subcategory
 from products.serializers import (
     CategorySerializer,
     ProductDetailSerializer,
@@ -66,25 +65,6 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == "retrieve":
             return ProductDetailSerializer
         return ProductSerializer
-
-    def retrieve(self, request, *args, **kwargs):
-        product = self.get_object()
-        serializer = self.get_serializer(
-            product,
-            context={"reference_subcategory": self._reference_subcategory(product)},
-        )
-        return Response(serializer.data)
-
-    def _reference_subcategory(self, product):
-        """Resolve the subcategory whose attributes apply to this detail
-        through the shared, never-guessing resolver (see
-        products.models.resolve_reference_subcategory)."""
-        try:
-            return resolve_reference_subcategory(
-                product, self.request.query_params.get("subcategory")
-            )
-        except ValueError as exc:
-            raise ValidationError({"subcategory": str(exc)})
 
 
 class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):

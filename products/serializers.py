@@ -100,12 +100,11 @@ class ProductOptionSerializer(serializers.ModelSerializer):
 
 
 class ProductDetailSerializer(ProductSerializer):
-    """Product detail plus the active attributes of the reference subcategory.
+    """Product detail plus the product's own active options.
 
-    The reference subcategory is resolved by the view (explicit
-    ?subcategory=<id>, or the product's only subcategory) and passed through
-    the serializer context as `reference_subcategory`; without one, `options`
-    is an empty list.
+    `options` lists the active attributes configured for this product in
+    the admin; a product without attributes returns an empty list. No
+    subcategory resolution is involved.
     """
 
     options = serializers.SerializerMethodField()
@@ -115,9 +114,6 @@ class ProductDetailSerializer(ProductSerializer):
 
     @extend_schema_field(ProductOptionSerializer(many=True))
     def get_options(self, obj):
-        subcategory = self.context.get("reference_subcategory")
-        if subcategory is None:
-            return []
         return ProductOptionSerializer(
-            subcategory.attributes.filter(is_active=True), many=True
+            obj.options.filter(is_active=True), many=True
         ).data

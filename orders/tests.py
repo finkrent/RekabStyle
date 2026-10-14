@@ -717,7 +717,7 @@ class OrderOptionsTests(OrderTestBase):
         )
         self.product.subcategories.add(self.subcategory)
         self.car_type = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
+            product=self.product,
             key="car_type",
             name="Car type",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -730,14 +730,14 @@ class OrderOptionsTests(OrderTestBase):
             attribute=self.car_type, key="offroad", label="Offroad", price_delta=200000
         )
         self.car_model = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
+            product=self.product,
             key="car_model",
             name="Car model",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=True,
         )
         self.piece_count = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
+            product=self.product,
             key="piece_count",
             name="Piece count",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -811,10 +811,10 @@ class OrderOptionsTests(OrderTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
 
-    def test_attribute_from_another_subcategory_rejected(self):
-        other = Subcategory.objects.create(category=self.category, name="Covers")
+    def test_attribute_from_another_product_rejected(self):
+        other_product = Product.objects.create(name="Other Mat", price=10000)
         foreign_attribute = ProductAttribute.objects.create(
-            subcategory=other,
+            product=other_product,
             key="color",
             name="Color",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -928,21 +928,51 @@ class OrderOptionsTests(OrderTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("subcategory_id", response.data["items"][0])
 
-    def test_multi_subcategory_options_require_reference(self):
+    def test_multi_subcategory_product_accepts_options_without_reference(self):
+        # Options are resolved from the product, not from any subcategory,
+        # so no reference subcategory is needed even for multi-subcategory
+        # products.
         other = Subcategory.objects.create(category=self.category, name="Covers")
         self.product.subcategories.add(other)
-        # Both subcategories define attributes -> ambiguous, never guessed.
-        ProductAttribute.objects.create(
-            subcategory=other,
-            key="color",
-            name="Color",
-            input_type=ProductAttribute.INPUT_TEXT,
-            is_required=False,
-        )
         user, address = self._make_complete_user()
         self.client.force_login(user)
-        response = self._checkout([self._item(self._valid_options(), with_subcategory=False)])
+        response = self._checkout(
+            [self._item(self._valid_options(), with_subcategory=False)]
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["total_price"], "300000")
+
+    def test_missing_options_rejected_for_attribute_product(self):
+        # A product with required attributes cannot be ordered without
+        # submitting them.
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self._checkout([self._item(None)])
         self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "Required attributes missing",
+            response.data["items"][0]["selected_options"][0],
+        )
+        self.assertFalse(Order.objects.filter(user=user).exists())
+
+    def test_options_rejected_for_product_without_attributes(self):
+        plain = Product.objects.create(name="Plain Mat", price=50000)
+        plain.categories.add(self.category)
+        plain.subcategories.add(self.subcategory)
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        item = {
+            "product_id": plain.pk,
+            "quantity": 1,
+            "subcategory_id": self.subcategory.pk,
+            "selected_options": self._valid_options(),
+        }
+        response = self._checkout([item])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "defines no active attributes",
+            response.data["items"][0]["selected_options"][0],
+        )
         self.assertFalse(Order.objects.filter(user=user).exists())
 
     def test_option_snapshots_survive_definition_changes(self):

@@ -45,11 +45,11 @@ never convert them to Rial.
 `GET /products/` returns 8 products per page. Follow the returned `next` URL
 (it keeps the `?subcategory=`/`?q=` filters) and treat `next: null` as the
 last page; `?page_size=` is not supported. `GET /products/{id}/` returns an
-`options` array — the active attributes of the product's reference
-subcategory. `select` options carry `choices` (each with a `price_delta`
-added to the product price); `text` options carry `"price_delta": "0"` and
-your own `value`. Products assigned to several subcategories need an
-explicit `?subcategory=<id>` on the detail call.
+`options` array — the active attributes configured for that product in the
+admin (definitions are per product, so no subcategory parameter is needed
+on the detail call). `select` options carry `choices` (each with a
+`price_delta` added to the product price); `text` options carry
+`"price_delta": "0"` and your own `value`.
 
 ### Checkout (normal, JSON)
 
@@ -74,8 +74,10 @@ const order = await api("/orders/", {
 ```
 
 `option_id`/`choice_id` are the numeric ids from the product detail
-`options`. `subcategory_id` and `selected_options` are optional; required
-attributes (per the product detail response) must all be submitted.
+`options`. `subcategory_id` is optional (a membership hint only —
+attributes always come from the product); `selected_options` is optional
+when every attribute of the product is optional, but required attributes
+(per the product detail response) must all be submitted.
 
 ### Cart updates
 

@@ -392,7 +392,7 @@ class ProductPaginationTests(TestCase):
 
 
 class ProductOptionTests(TestCase):
-    """GET /products/{id}/ exposes the reference subcategory's attributes."""
+    """GET /products/{id}/ exposes the product's own active attributes."""
 
     def setUp(self):
         self.category = Category.objects.create(name="Auto")
@@ -401,9 +401,14 @@ class ProductOptionTests(TestCase):
         self.product = Product.objects.create(name="Mat X", price=1000000)
         self.product.categories.add(self.category)
         self.product.subcategories.add(self.mats, self.covers)
+        # A second product in the SAME subcategory with no attributes:
+        # option definitions are scoped to each product, not the subcategory.
+        self.plain = Product.objects.create(name="Plain Mat", price=500000)
+        self.plain.categories.add(self.category)
+        self.plain.subcategories.add(self.mats)
 
         self.car_type = ProductAttribute.objects.create(
-            subcategory=self.mats,
+            product=self.product,
             key="car_type",
             name="نوع خودرو",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -416,14 +421,14 @@ class ProductOptionTests(TestCase):
             attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
         )
         self.car_model = ProductAttribute.objects.create(
-            subcategory=self.mats,
+            product=self.product,
             key="car_model",
             name="مدل خودرو",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=True,
         )
         self.piece_count = ProductAttribute.objects.create(
-            subcategory=self.mats,
+            product=self.product,
             key="piece_count",
             name="تعداد تکه",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -433,18 +438,19 @@ class ProductOptionTests(TestCase):
             attribute=self.piece_count, key="two_piece", label="۲ تکه", price_delta=0
         )
         self.hidden = ProductAttribute.objects.create(
-            subcategory=self.mats,
+            product=self.product,
             key="legacy",
             name="Legacy",
             input_type=ProductAttribute.INPUT_TEXT,
             is_active=False,
         )
 
-    def _detail(self, **params):
-        return self.client.get(reverse("product-detail", args=[self.product.pk]), params)
+    def _detail(self, product=None, **params):
+        target = product or self.product
+        return self.client.get(reverse("product-detail", args=[target.pk]), params)
 
     def test_options_include_select_and_text_attributes_together(self):
-        response = self._detail(subcategory=self.mats.pk)
+        response = self._detail()
         self.assertEqual(response.status_code, 200)
         options = {option["key"]: option for option in response.data["options"]}
         self.assertEqual(set(options), {"car_type", "car_model", "piece_count"})
@@ -467,22 +473,27 @@ class ProductOptionTests(TestCase):
         self.assertFalse(options["piece_count"]["required"])
 
     def test_inactive_attributes_are_not_returned(self):
-        response = self._detail(subcategory=self.mats.pk)
+        response = self._detail()
         keys = [option["key"] for option in response.data["options"]]
         self.assertNotIn("legacy", keys)
 
-    def test_explicit_reference_subcategory_is_used(self):
-        response = self._detail(subcategory=self.covers.pk)
+    def test_attributes_are_scoped_to_each_product(self):
+        # Same subcategory, but the plain product defines no attributes of
+        # its own: options must not leak from the subcategory or siblings.
+        response = self._detail(product=self.plain)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["options"], [])
 
-    def test_foreign_subcategory_is_rejected(self):
-        foreign = Subcategory.objects.create(category=self.category, name="Other")
-        response = self._detail(subcategory=foreign.pk)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("subcategory", response.data)
+    def test_multi_subcategory_product_returns_its_own_options(self):
+        # The product belongs to two subcategories; its options are its own
+        # definitions and need no ?subcategory= hint.
+        response = self._detail()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["options"]), 3)
 
-    def test_invalid_subcategory_value_is_rejected(self):
-        response = self._detail(subcategory="abc")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("subcategory", response.data)
+    def test_subcategory_query_param_is_ignored_on_detail(self):
+        # Options come from the product; ?subcategory= no longer filters or
+        # selects them on the detail endpoint.
+        response = self._detail(subcategory=self.covers.pk)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["options"]), 3)

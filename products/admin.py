@@ -43,7 +43,9 @@ class CategoryAdmin(admin.ModelAdmin):
 
 
 class ProductAttributeInline(admin.TabularInline):
-    """Attributes managed directly on the subcategory admin page."""
+    """Attributes managed directly on the product admin page (each product
+    carries its own definitions; choices are edited on the attribute's
+    own change page)."""
 
     model = ProductAttribute
     extra = 1
@@ -56,7 +58,6 @@ class SubcategoryAdmin(admin.ModelAdmin):
     list_filter = ("category", "is_active")
     search_fields = ("name",)
     list_select_related = ("category",)
-    inlines = [ProductAttributeInline]
 
 
 @admin.register(Product)
@@ -80,6 +81,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_editable = ("price", "is_active")
     readonly_fields = ("created_at", "updated_at")
     filter_horizontal = ("categories", "subcategories")
+    inlines = [ProductAttributeInline]
 
     @admin.display(description="Categories")
     def categories_summary(self, obj):
@@ -111,11 +113,11 @@ class AttributeChoiceInline(admin.TabularInline):
 
 @admin.register(ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
-    """Generic subcategory attributes: enable/disable, required flag,
-    input type, and their selectable choices."""
+    """Per-product attributes: enable/disable, required flag, input type,
+    and their selectable choices."""
 
-    list_display = ("key", "name", "subcategory", "input_type", "is_required", "is_active")
-    list_filter = ("input_type", "is_required", "is_active", "subcategory")
-    search_fields = ("key", "name", "subcategory__name")
-    list_select_related = ("subcategory",)
+    list_display = ("key", "name", "product", "input_type", "is_required", "is_active")
+    list_filter = ("input_type", "is_required", "is_active", "product")
+    search_fields = ("key", "name", "product__name")
+    list_select_related = ("product",)
     inlines = [AttributeChoiceInline]

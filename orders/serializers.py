@@ -13,12 +13,7 @@ from orders.models import (
     OrderItemOption,
 )
 from payments.models import Payment
-from products.models import (
-    Product,
-    ProductAttribute,
-    Subcategory,
-    resolve_reference_subcategory,
-)
+from products.models import Product, ProductAttribute, Subcategory
 
 # Maximum length accepted for a text attribute's value in an order payload.
 OPTION_TEXT_MAX_LENGTH = 200
@@ -149,12 +144,13 @@ class AdminOrderSerializer(OrderSerializer):
 class OrderItemInputSerializer(serializers.Serializer):
     """One line of an order payload.
 
-    `subcategory_id` selects the reference subcategory whose attributes
-    apply to this item. Optional `selected_options` is a list of
-    {"option_id": <attribute id>, "choice_id" | "value": ...} entries.
-    Attribute validation engages when `subcategory_id` or
-    `selected_options` is present; legacy payloads without either keep
-    their original behavior.
+    Optional `selected_options` is a list of
+    {"option_id": <attribute id>, "choice_id" | "value": ...} entries
+    validated against the product's own active attributes. Optional
+    `subcategory_id` is membership-checked when present, but attributes
+    always come from the product itself. Products with required
+    attributes must submit them; products without any attributes keep
+    their legacy behavior.
     """
 
     product_id = serializers.PrimaryKeyRelatedField(
@@ -197,41 +193,23 @@ class OrderItemInputSerializer(serializers.Serializer):
                 {"subcategory_id": "This product does not belong to the given subcategory."}
             )
 
-        if subcategory is None and not raw_options:
-            # Legacy payload: no attributes involved.
-            attrs["options"] = []
-            return attrs
-
-        if subcategory is None:
-            try:
-                subcategory = resolve_reference_subcategory(product)
-            except ValueError as exc:
-                raise serializers.ValidationError({"subcategory_id": str(exc)})
-            if subcategory is None:
-                raise serializers.ValidationError(
-                    {
-                        "subcategory_id": (
-                            "A reference subcategory is required to submit "
-                            "selected_options for this product."
-                        )
-                    }
-                )
-            attrs["subcategory"] = subcategory
-
+        # Attribute definitions live on the product itself; `subcategory_id`
+        # is only an optional membership-checked hint and never drives
+        # which attributes apply.
         attributes = {
             attribute.pk: attribute
-            for attribute in subcategory.attributes.filter(is_active=True).prefetch_related(
+            for attribute in product.options.filter(is_active=True).prefetch_related(
                 "choices"
             )
         }
-        if not attributes and raw_options:
-            raise serializers.ValidationError(
-                {
-                    "selected_options": (
-                        "The reference subcategory defines no active attributes."
-                    )
-                }
-            )
+        if not attributes:
+            if raw_options:
+                raise serializers.ValidationError(
+                    {"selected_options": "This product defines no active attributes."}
+                )
+            # Legacy payload: the product has no attributes at all.
+            attrs["options"] = []
+            return attrs
 
         choices_by_id = {}
         for attribute in attributes.values():
