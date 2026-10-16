@@ -13,6 +13,7 @@ from products.models import Product
 class Order(models.Model):
     STATUS_PENDING = "pending"
     STATUS_PAID = "paid"
+    STATUS_FAILED = "failed"
     STATUS_PROCESSING = "processing"
     STATUS_SHIPPED = "shipped"
     STATUS_DELIVERED = "delivered"
@@ -21,6 +22,7 @@ class Order(models.Model):
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
         (STATUS_PAID, "Paid"),
+        (STATUS_FAILED, "Failed"),
         (STATUS_PROCESSING, "Processing"),
         (STATUS_SHIPPED, "Shipped"),
         (STATUS_DELIVERED, "Delivered"),

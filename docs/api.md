@@ -259,12 +259,16 @@ Product object:
 ```
 
 `image` is an absolute URL or `null`.
+Inactive products remain in the catalog and carry `"is_active": false`; the
+same availability field is returned for nested subcategory products and
+best-seller products. The storefront should show them as unavailable and
+disable purchase. Checkout rejects inactive products.
 
 ### GET /products/{id}/
 
 `200` with one product object plus an `options` array (the active
-attributes of the product's reference subcategory); `404` for unknown or
-inactive products.
+attributes of the product's reference subcategory); `404` for an unknown
+product. Inactive products are returned with `"is_active": false`.
 
 The reference subcategory is chosen explicitly with `?subcategory=<id>`
 (verified against the product's assignments) or resolved safely: a
@@ -488,9 +492,9 @@ decoded, and re-encoded through Pillow before storage under
 (30 percent by default), frozen onto the order items. A failed image check
 returns `400` with `{"detail": "…"}` and creates no order.
 
-Order statuses: `pending`, `paid`, `processing`, `shipped`, `delivered`,
-`cancelled`. Only `pending` orders can be paid; staff manage later transitions
-in Django Admin.
+Order statuses: `pending`, `paid`, `failed`, `processing`, `shipped`,
+`delivered`, `cancelled`. Only `pending` orders can be paid; staff manage later
+transitions in Django Admin.
 
 ## Payments
 
@@ -518,15 +522,14 @@ order.
 ### GET /payments/callback/
 
 Public; Zibal redirects the customer's browser here with
-`?trackId=<id>&success=<0|1>`. The flag is never trusted alone: `success=1`
-triggers server-side verification against Zibal; any other value reports
-failure without contacting the gateway.
+`?trackId=<id>&success=<0|1>`. The flag is never trusted alone: both success
+and failure callbacks trigger server-side verification against Zibal.
 
 | Status | Response |
 | --- | --- |
 | `400` | `{"detail": "trackId is required."}` |
 | `200` | Verified: `{"detail": "Payment verified successfully.", "status": "paid", "order_number": "20260915-1A2B3C4D"}` |
-| `200` | Cancelled or failed: `{"detail": "Payment was cancelled or failed.", "status": "failed"}` (plus `order_number` when known) |
+| `200` | Failed: `{"detail": "…", "status": "failed"}` (plus `order_number` when known); when Zibal confirms failure, the payment and pending order are marked `failed` |
 
 When `FRONTEND_PAYMENT_RESULT_URL` is configured, the browser is redirected
 there instead with `?status=paid|failed&detail=<text>&order_number=<id>`.
@@ -549,8 +552,9 @@ Bearer. Lets the frontend confirm payment after returning from the gateway.
 Verification always happens server-side: the gateway amount (Rial) must equal
 the stored Toman amount × 10. Completion is idempotent — a row lock commits
 payment and order status together, a repeated call returns `200` without
-contacting Zibal again, and success SMS is sent only once. A failed
-verification leaves the order `pending`.
+contacting Zibal again, and success SMS is sent only once. A gateway-confirmed
+failed payment or amount mismatch marks both the payment and pending order
+`failed`.
 
 After success, the customer and the administrator receive Kavenegar SMS
 (template selection and failure handling are described in

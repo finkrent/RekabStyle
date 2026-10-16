@@ -35,12 +35,13 @@ class ProductApiTests(TestCase):
         hidden = Product.objects.create(name="Hidden Item", price=1000, is_active=False)
         hidden.categories.add(self.electronics)
 
-    def test_product_list_is_public(self):
+    def test_product_list_includes_inactive_products_with_availability(self):
         response = self.client.get(PRODUCT_LIST_URL)
         self.assertEqual(response.status_code, 200)
-        names = [item["name"] for item in response.data["results"]]
+        products = {item["name"]: item for item in response.data["results"]}
+        names = list(products)
         self.assertIn("Phone X", names)
-        self.assertNotIn("Hidden Item", names)
+        self.assertFalse(products["Hidden Item"]["is_active"])
 
     def test_product_detail(self):
         response = self.client.get(reverse("product-detail", args=[self.product.pk]))
@@ -62,10 +63,17 @@ class ProductApiTests(TestCase):
         self.assertTrue(response.data["image"].startswith("http://testserver/"))
 
     def test_category_filter_matches_any_category(self):
-        for category in (self.electronics, self.home):
-            response = self.client.get(PRODUCT_LIST_URL, {"category": category.pk})
-            self.assertEqual(response.data["count"], 1)
-            self.assertEqual(response.data["results"][0]["name"], "Phone X")
+        electronics = self.client.get(
+            PRODUCT_LIST_URL, {"category": self.electronics.pk}
+        )
+        self.assertEqual(electronics.data["count"], 2)
+        self.assertEqual(
+            {item["name"] for item in electronics.data["results"]},
+            {"Phone X", "Hidden Item"},
+        )
+        home = self.client.get(PRODUCT_LIST_URL, {"category": self.home.pk})
+        self.assertEqual(home.data["count"], 1)
+        self.assertEqual(home.data["results"][0]["name"], "Phone X")
 
     def test_subcategory_filter_matches_any_subcategory(self):
         for subcategory in (self.phones, self.blenders):
@@ -107,12 +115,13 @@ class ProductApiTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Travel Mug")
 
-    def test_search_excludes_inactive_products(self):
+    def test_search_includes_inactive_products_with_availability(self):
         Product.objects.create(
             name="Hidden Laptop", description="private laptop", price=5000, is_active=False
         )
         response = self.client.get(PRODUCT_LIST_URL, {"q": "laptop"})
-        self.assertEqual(response.data["count"], 0)
+        self.assertEqual(response.data["count"], 1)
+        self.assertFalse(response.data["results"][0]["is_active"])
 
     def test_search_combines_with_category_filter(self):
         laptop = Product.objects.create(name="Laptop Pro", price=50000000)
@@ -123,9 +132,9 @@ class ProductApiTests(TestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["name"], "Laptop Pro")
 
-    def test_blank_search_returns_unfiltered_active_products(self):
+    def test_blank_search_returns_unfiltered_products(self):
         response = self.client.get(PRODUCT_LIST_URL, {"q": "   "})
-        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["count"], 2)
 
     def test_category_list_includes_subcategories(self):
         response = self.client.get(CATEGORY_LIST_URL)
@@ -205,11 +214,12 @@ class BestSellerApiTests(TestCase):
             [item["name"] for item in response.data], ["Phone X", "Laptop Pro"]
         )
 
-    def test_inactive_product_is_not_exposed(self):
+    def test_inactive_best_seller_is_exposed_as_unavailable(self):
         BestSeller.objects.create(product=self.inactive, position=0)
         response = self.client.get(BEST_SELLER_URL)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, [])
+        self.assertEqual(response.data[0]["name"], "Hidden Item")
+        self.assertFalse(response.data[0]["is_active"])
 
     def test_curated_products_only(self):
         BestSeller.objects.create(product=self.phone, position=0)
@@ -359,16 +369,18 @@ class SubcategoryDetailProductsTests(TestCase):
         self.hidden = Product.objects.create(name="Hidden", price=1000, is_active=False)
         self.hidden.subcategories.add(self.phones)
 
-    def test_detail_embeds_active_products(self):
+    def test_detail_embeds_inactive_products_with_availability(self):
         response = self.client.get(reverse("subcategory-detail", args=[self.phones.pk]))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["slug"], "mobile-phones")
-        names = [item["name"] for item in response.data["products"]]
-        self.assertEqual(names, ["Phone X"])
+        products = {item["name"]: item for item in response.data["products"]}
+        self.assertFalse(products["Hidden"]["is_active"])
 
     def test_embedded_product_carries_core_fields(self):
         response = self.client.get(reverse("subcategory-detail", args=[self.phones.pk]))
-        product = response.data["products"][0]
+        product = next(
+            item for item in response.data["products"] if item["name"] == "Phone X"
+        )
         self.assertEqual(product["slug"], "phone-x")
         self.assertEqual(product["price"], "25000000")
 

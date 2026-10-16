@@ -39,7 +39,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = ProductPagination
 
     def get_queryset(self):
-        queryset = Product.objects.filter(is_active=True).prefetch_related(
+        queryset = Product.objects.all().prefetch_related(
             "categories", "subcategories"
         )
         # Query-parameter filters apply to the catalog list; the detail
@@ -109,7 +109,7 @@ class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.prefetch_related(
                 Prefetch(
                     "products",
-                    queryset=Product.objects.filter(is_active=True).prefetch_related(
+                    queryset=Product.objects.all().prefetch_related(
                         "categories", "subcategories"
                     ),
                 )
@@ -141,7 +141,8 @@ class BestSellerViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     The list is curated manually by staff in Django Admin (products + a
     position number, lower shows first). Returned flat as product objects,
-    in position order, unpaginated. Inactive products are never exposed.
+    in position order, unpaginated. Inactive products are included with
+    ``is_active=False`` so the storefront can show them as unavailable.
     """
 
     serializer_class = ProductSerializer
@@ -152,7 +153,7 @@ class BestSellerViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         # BestSeller position; Product instances so ProductSerializer works
         # directly on them.
         return (
-            Product.objects.filter(is_active=True, best_seller__isnull=False)
+            Product.objects.filter(best_seller__isnull=False)
             .prefetch_related("categories", "subcategories")
             .order_by("best_seller__position", "-best_seller__created_at")
         )

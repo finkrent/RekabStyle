@@ -122,6 +122,8 @@ class InitiatePaymentTests(PaymentTestBase):
         self.assertEqual(response.status_code, 502)
         payment = Payment.objects.get(order=self.order)
         self.assertEqual(payment.status, Payment.STATUS_FAILED)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PENDING)
 
 
 class VerifyPaymentTests(PaymentTestBase):
@@ -185,7 +187,7 @@ class VerifyPaymentTests(PaymentTestBase):
         )
         self.assertEqual(response.status_code, 400)
         self.order.refresh_from_db()
-        self.assertEqual(self.order.status, Order.STATUS_PENDING)
+        self.assertEqual(self.order.status, Order.STATUS_FAILED)
         self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
 
     @patch(VERIFY_TARGET)
@@ -198,7 +200,8 @@ class VerifyPaymentTests(PaymentTestBase):
         )
         self.assertEqual(response.status_code, 400)
         self.order.refresh_from_db()
-        self.assertEqual(self.order.status, Order.STATUS_PENDING)
+        self.assertEqual(self.order.status, Order.STATUS_FAILED)
+        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
 
     @patch(SMS_ADMIN_TARGET)
     @patch(SMS_CUSTOMER_TARGET)
@@ -239,16 +242,53 @@ class VerifyPaymentTests(PaymentTestBase):
         self.assertEqual(self.order.status, Order.STATUS_PAID)
 
     @patch(VERIFY_TARGET)
-    def test_callback_with_success_zero_does_not_verify(self, mock_verify):
+    def test_callback_with_success_zero_verifies_and_marks_order_failed(self, mock_verify):
         self._make_payment()
+        mock_verify.return_value = self._verify_result(paid=False, result=202, amount=0)
         response = self.client.get(
             CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], "failed")
-        mock_verify.assert_not_called()
+        mock_verify.assert_called_once_with("TRK123")
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_FAILED)
+        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
+
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_callback_success_zero_does_not_override_verified_payment(
+        self, mock_verify, mock_sms_customer, mock_sms_admin
+    ):
+        self._make_payment()
+        mock_verify.return_value = self._verify_result(
+            paid=True, amount=int(self.order.total_price) * 10
+        )
+
+        response = self.client.get(
+            CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
+        )
+
+        self.assertEqual(response.data["status"], "paid")
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PAID)
+        mock_verify.assert_called_once_with("TRK123")
+        mock_sms_customer.assert_called_once()
+        mock_sms_admin.assert_called_once()
+
+    @patch(VERIFY_TARGET, side_effect=ZibalError("temporarily unavailable"))
+    def test_callback_gateway_error_does_not_fail_order(self, _mock_verify):
+        self._make_payment()
+
+        response = self.client.get(
+            CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
+        )
+
+        self.assertEqual(response.data["status"], "failed")
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_PENDING)
+        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_PENDING)
 
 
 class ZibalServiceTests(TestCase):

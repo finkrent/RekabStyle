@@ -104,7 +104,8 @@ class PaymentCallbackView(APIView):
     """GET /api/v1/payments/callback/ - Zibal redirects the customer's browser here.
 
     The payment is verified server-side; the callback's own success flag is
-    never trusted on its own.
+    never trusted on its own. A failed callback is verified too, and a
+    confirmed unsuccessful payment marks the order failed.
     """
 
     # The gateway redirects the customer's browser here; no session/CSRF.
@@ -118,15 +119,32 @@ class PaymentCallbackView(APIView):
                 {"detail": "trackId is required."}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        if request.query_params.get("success") != "1":
-            return self._respond(request, order=None, paid=False, detail="Payment was cancelled or failed.")
-
         try:
             payment = verify_and_complete_payment(track_id)
         except PaymentError as exc:
-            return self._respond(request, order=None, paid=False, detail=str(exc))
+            payment = (
+                Payment.objects.filter(authority=track_id)
+                .select_related("order")
+                .first()
+            )
+            return self._respond(
+                request,
+                order=payment.order if payment else None,
+                paid=False,
+                detail=str(exc),
+            )
         except ZibalError as exc:
-            return self._respond(request, order=None, paid=False, detail=str(exc))
+            payment = (
+                Payment.objects.filter(authority=track_id)
+                .select_related("order")
+                .first()
+            )
+            return self._respond(
+                request,
+                order=payment.order if payment else None,
+                paid=False,
+                detail=str(exc),
+            )
 
         return self._respond(
             request, order=payment.order, paid=True, detail="Payment verified successfully."

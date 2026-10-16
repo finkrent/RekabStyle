@@ -18,12 +18,21 @@ class PaymentError(Exception):
 
 def initiate_payment(order, callback_url):
     """Create a pending Payment and request a payment session from Zibal."""
-    if order.status == Order.STATUS_PAID:
-        raise PaymentError("This order has already been paid.")
-    if order.status != Order.STATUS_PENDING:
-        raise PaymentError(f"Orders in status '{order.status}' cannot be paid.")
+    with transaction.atomic():
+        try:
+            order = (
+                Order.objects.select_for_update()
+                .select_related("user")
+                .get(pk=order.pk)
+            )
+        except Order.DoesNotExist as exc:
+            raise PaymentError("This order is no longer available.") from exc
+        if order.status == Order.STATUS_PAID:
+            raise PaymentError("This order has already been paid.")
+        if order.status != Order.STATUS_PENDING:
+            raise PaymentError(f"Orders in status '{order.status}' cannot be paid.")
 
-    payment = Payment.objects.create(order=order, amount=order.total_price)
+        payment = Payment.objects.create(order=order, amount=order.total_price)
     try:
         track_id = request_payment(
             amount=order.total_price,
@@ -62,13 +71,15 @@ def verify_and_complete_payment(track_id, user=None):
     payment.result_code = result["result"]
 
     if not result["paid"]:
-        payment.status = Payment.STATUS_FAILED
-        payment.save(update_fields=["status", "result_code", "updated_at"])
+        payment, marked_failed = _mark_payment_failed(payment, result["result"])
+        if not marked_failed:
+            return payment
         raise PaymentError(result["message"] or "Payment was not completed successfully.")
 
     if result["amount"] is None or int(result["amount"]) != int(payment.amount) * RIAL_PER_TOMAN:
-        payment.status = Payment.STATUS_FAILED
-        payment.save(update_fields=["status", "result_code", "updated_at"])
+        payment, marked_failed = _mark_payment_failed(payment, result["result"])
+        if not marked_failed:
+            return payment
         logger.error(
             "Payment %s amount mismatch: gateway=%s rial expected=%s toman (as %s rial)",
             payment.pk, result["amount"], payment.amount, int(payment.amount) * RIAL_PER_TOMAN,
@@ -90,6 +101,23 @@ def verify_and_complete_payment(track_id, user=None):
 
     _send_payment_success_sms(payment)
     return payment
+
+
+def _mark_payment_failed(payment, result_code):
+    """Mark an unsuccessful payment and its still-pending order as failed."""
+    with transaction.atomic():
+        payment = Payment.objects.select_for_update().get(pk=payment.pk)
+        order = Order.objects.select_for_update().get(pk=payment.order_id)
+        if payment.status == Payment.STATUS_SUCCESS or order.status == Order.STATUS_PAID:
+            return payment, False
+
+        payment.status = Payment.STATUS_FAILED
+        payment.result_code = result_code
+        payment.save(update_fields=["status", "result_code", "updated_at"])
+        if order.status == Order.STATUS_PENDING:
+            order.status = Order.STATUS_FAILED
+            order.save(update_fields=["status", "updated_at"])
+    return payment, True
 
 
 def _send_payment_success_sms(payment):

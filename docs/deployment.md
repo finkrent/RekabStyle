@@ -48,5 +48,17 @@ Schedule expired-token cleanup:
 uv run python manage.py flushexpiredtokens
 ```
 
-Expired `OtpCode` rows have no automatic cleanup, so add a periodic database
-cleanup policy. Monitor logs, failed payments, database growth, and media health.
+Schedule order cleanup once per day. The command removes pending orders with
+no payment attempts after 24 hours from creation and failed orders 30 days
+after their last status update. It also deletes their payment records and
+custom-design image files; paid orders are never removed. For example, add
+this cron entry, replacing the path with the application directory:
+
+```cron
+0 3 * * * cd /path/to/mimo-shop && uv run python manage.py cleanup_orders >> /var/log/mimo-shop/order-cleanup.log 2>&1
+```
+
+Retention can be overridden for a one-off run with `--pending-hours` and
+`--failed-days`. Expired `OtpCode` rows have no automatic cleanup, so add a
+separate periodic database cleanup policy. Monitor cleanup logs, failed
+payments, database growth, and media health.

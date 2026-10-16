@@ -51,6 +51,11 @@ added to the product price); `text` options carry `"price_delta": "0"` and
 your own `value`. Products assigned to several subcategories need an
 explicit `?subcategory=<id>` on the detail call.
 
+Product lists, subcategory details, and best-seller lists include unavailable
+products. When `is_active` is `false`, render the product card as unavailable
+(for example, gray it out) and disable its purchase controls. The backend
+rejects checkout for inactive products even if a client submits one.
+
 ### Checkout (normal, JSON)
 
 ```js
@@ -112,7 +117,9 @@ source of truth for prices and validation.
 5. Confirm with `POST /payments/verify/` before displaying success.
 
 The callback query is not proof of payment. Verification is server-side,
-amount-checked, and idempotent. A failed payment leaves the order pending.
+amount-checked, and idempotent. A verified unsuccessful payment changes the
+order status to `failed`; the failed order remains visible until scheduled
+cleanup removes it after 30 days.
 
 ## Errors
 
