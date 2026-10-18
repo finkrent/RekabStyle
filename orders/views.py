@@ -1,4 +1,5 @@
-﻿from django.contrib.auth import get_user_model
+﻿from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -35,8 +36,9 @@ class OrderListCreateView(generics.ListCreateAPIView):
     """GET: own orders (all orders for staff) / POST: place an order.
 
     POST accepts `application/json` for plain orders and
-    `multipart/form-data` when the "Custom Design" checkbox is used on the
-    checkout page (the design images must arrive as file parts).
+    `multipart/form-data`. While settings.CUSTOM_DESIGN["ENABLED"] is False
+    the custom-design fields are dropped from the contract and ignored;
+    with the feature enabled the design images must arrive as file parts.
     """
 
     permission_classes = [permissions.IsAuthenticated]
@@ -77,10 +79,15 @@ class OrderListCreateView(generics.ListCreateAPIView):
     def _design_from(validated_data):
         """The custom-design payload for the service layer, or None.
 
-        The serializer's cross-field validation guarantees that whenever
+        Disabled while ``settings.CUSTOM_DESIGN["ENABLED"]`` is False (the
+        serializer then also drops the design fields, so stale frontend
+        payloads are silently ignored instead of validated). Otherwise the
+        serializer's cross-field validation guarantees that whenever
         `custom_design_product_ids` is set, description and images are
         present too.
         """
+        if not settings.CUSTOM_DESIGN["ENABLED"]:
+            return None
         product_ids = validated_data.get("custom_design_product_ids")
         if not product_ids:
             return None

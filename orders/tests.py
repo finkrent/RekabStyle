@@ -2,7 +2,7 @@ import json
 import shutil
 import tempfile
 from io import BytesIO
-from unittest import mock
+from unittest import mock, skipUnless
 
 from PIL import Image
 from django.conf import settings
@@ -13,6 +13,7 @@ from django.urls import reverse
 
 from accounts.models import Address
 from orders.models import CustomDesign, Order, OrderItemOption
+from orders.serializers import OrderCreateSerializer
 from orders.services.orders import create_order
 from payments.services.payments import initiate_payment
 from products.models import AttributeChoice, Category, Product, ProductAttribute, Subcategory
@@ -238,6 +239,9 @@ class OrderVisibilityTests(OrderTestBase):
             self.assertNotIn(field, response.data)
 
 
+@skipUnless(
+    settings.CUSTOM_DESIGN["ENABLED"], "Custom-design checkout is disabled"
+)
 class CheckoutCustomDesignTests(OrderTestBase):
     """POST /api/v1/orders/ with the "Custom Design" checkbox flow.
 
@@ -578,6 +582,57 @@ class CheckoutCustomDesignTests(OrderTestBase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.exists())
+
+
+@skipUnless(
+    not settings.CUSTOM_DESIGN["ENABLED"], "Custom-design checkout is enabled"
+)
+class CustomDesignDisabledTests(OrderTestBase):
+    """The custom-design intake is off (settings.CUSTOM_DESIGN["ENABLED"]).
+
+    POST /orders/ neither validates nor prices the design fields: a stale
+    frontend may still send them and the request must succeed as a plain
+    order. The read side is untouched, so historical designs keep
+    rendering. Re-enabling (env CUSTOM_DESIGN_ENABLED=True) restores the
+    full flow and CheckoutCustomDesignTests above.
+    """
+
+    def test_serializer_contract_hides_design_fields(self):
+        fields = OrderCreateSerializer().fields
+        for name in (
+            "custom_design_product_ids",
+            "custom_design_description",
+            "images",
+        ):
+            self.assertNotIn(name, fields)
+
+    def test_design_fields_are_ignored_at_checkout(self):
+        """A stale frontend may still send design fields; they are a no-op."""
+        user, address = self._make_complete_user()
+        other = Product.objects.create(name="Mug", price=50000)
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            {
+                "items": json.dumps(
+                    [
+                        {"product_id": self.product.pk, "quantity": 2},
+                        {"product_id": other.pk, "quantity": 1},
+                    ]
+                ),
+                "custom_design_product_ids": json.dumps([self.product.pk]),
+                "custom_design_description": "Print my logo, matte finish",
+                "images": [_image_file()],
+                "address_id": address.pk,
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        # No surcharge anywhere: every item stays at the catalog price.
+        for item in response.data["items"]:
+            self.assertEqual(item["surcharge_percent"], "0.00")
+        self.assertEqual(response.data["total_price"], "250000")
+        self.assertIsNone(response.data["custom_design"])
+        self.assertFalse(CustomDesign.objects.exists())
 
 
 class OrderUpdateTests(OrderTestBase):

@@ -56,7 +56,9 @@ quantities, and shipping addresses are snapshotted onto orders.
 
 Custom-design checkout uses `multipart/form-data`, accepts one to three valid
 JPEG, PNG, or WEBP images, and applies the configured surcharge. Images are
-decoded and re-encoded with Pillow before storage.
+decoded and re-encoded with Pillow before storage. The intake is feature-flagged
+and currently disabled (`CUSTOM_DESIGN_ENABLED=False`): design fields are
+ignored at checkout until it is re-enabled.
 
 Payments are verified server-side with Zibal. Successful verification is
 idempotent and marks the payment and order in one transaction. Customer payment

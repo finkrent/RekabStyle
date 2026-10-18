@@ -228,6 +228,12 @@ FRONTEND_PAYMENT_RESULT_URL = os.environ.get("FRONTEND_PAYMENT_RESULT_URL", "")
 
 # --- Custom design orders ---
 CUSTOM_DESIGN = {
+    # Master switch for the checkout custom-design flow. When False the
+    # order endpoint drops the design fields entirely (they are ignored,
+    # never validated or priced); models, admin, and historical designs
+    # keep working. Re-enable with CUSTOM_DESIGN_ENABLED=True - no code
+    # changes required.
+    "ENABLED": _env_bool("CUSTOM_DESIGN_ENABLED", "False"),
     # Surcharge applied on top of each product's unit price (percent).
     "SURCHARGE_PERCENT": _env_int("CUSTOM_DESIGN_SURCHARGE_PERCENT", 30),
     # Uploaded design images per order.

@@ -389,6 +389,11 @@ class OrderCreateSerializer(serializers.Serializer):
     `custom_design_product_ids` selects which of the submitted items get the
     +30% surcharge; `custom_design_description` and 1-3 `images` are then
     required. All-or-nothing: any design field without the full set is a 400.
+
+    While ``settings.CUSTOM_DESIGN["ENABLED"]`` is False the three design
+    fields are removed from the contract entirely (see `get_fields`): the
+    backend neither validates nor prices them, and stale payloads that
+    still send them are accepted as plain orders.
     """
 
     items = serializers.JSONField()
@@ -409,6 +414,23 @@ class OrderCreateSerializer(serializers.Serializer):
         max_length=settings.CUSTOM_DESIGN["MAX_IMAGES"],
         required=False,
     )
+
+    def get_fields(self):
+        """Drop the custom-design intake fields while the feature is off.
+
+        Only the declarations are hidden: the field definitions, validators,
+        and the service/view logic below stay intact, so restoring the
+        checkout flow is a single setting (env CUSTOM_DESIGN_ENABLED=True).
+        """
+        fields = super().get_fields()
+        if not settings.CUSTOM_DESIGN["ENABLED"]:
+            for name in (
+                "custom_design_product_ids",
+                "custom_design_description",
+                "images",
+            ):
+                fields.pop(name, None)
+        return fields
 
     def validate_items(self, value):
         return _parse_items(value)

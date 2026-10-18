@@ -34,13 +34,17 @@
 | `ZIBAL_CALLBACK_URL` | Empty | Public callback URL; request URL is fallback |
 | `FRONTEND_PAYMENT_RESULT_URL` | Empty | Optional payment result redirect |
 | `JWT_REFRESH_COOKIE_NAME` | `refresh_token` | Refresh-cookie name |
+| `CUSTOM_DESIGN_ENABLED` | `False` | Master switch for the checkout custom-design flow; `False` ignores the design fields at checkout |
 | `CUSTOM_DESIGN_SURCHARGE_PERCENT` | `30` | Custom-item surcharge |
 | `CUSTOM_DESIGN_MAX_IMAGE_BYTES` | `5242880` | Maximum bytes per image |
 
 Fixed custom-design limits are three images, 6000 by 6000 pixels, JPEG/PNG/WEBP
 content, and a 2000-character description. Total multipart upload limits are
-12 MiB. Administrator payment SMS is sent to ``ADMIN_PHONE_NUMBER`` when it is
-configured; unset, it is skipped with a log warning.
+12 MiB. While `CUSTOM_DESIGN_ENABLED` is `False` the checkout endpoint ignores
+the custom-design fields entirely (no validation, no surcharge, no design rows);
+models, Django Admin, and historical designs keep working. Administrator
+payment SMS is sent to ``ADMIN_PHONE_NUMBER`` when it is configured; unset, it
+is skipped with a log warning.
 
 ## Browser security
 

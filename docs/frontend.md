@@ -92,6 +92,10 @@ can be edited.
 
 ### Custom design (multipart)
 
+Currently disabled on the backend (`CUSTOM_DESIGN_ENABLED=False`): the design
+fields are ignored, so a plain JSON checkout is enough. The reference below
+applies once `CUSTOM_DESIGN_ENABLED=True` is set on the backend.
+
 Custom design requires `FormData`. Do not set `Content-Type` manually:
 
 ```js

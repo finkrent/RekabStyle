@@ -37,6 +37,10 @@ Orders snapshot product names, prices, quantities, and shipping addresses.
 Checkout locks product rows and validates prices server-side. It does not merge
 duplicate lines or decrement stock. Custom designs are one-to-one with orders,
 link selected items, and store re-encoded Pillow images under `designs/YYYY/MM/`.
+The custom-design *intake* is feature-flagged: with
+`CUSTOM_DESIGN_ENABLED=False` (the default) the checkout endpoint ignores the
+design fields, while the models, admin, pricing logic, and historical designs
+stay fully functional — set the variable to `True` to restore the flow.
 
 Product attributes (options) are defined generically per subcategory in Django
 Admin: `ProductAttribute` (stable key, display name, `select`/`text` input

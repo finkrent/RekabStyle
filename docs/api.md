@@ -476,6 +476,15 @@ time. Duplicate lines are not merged and stock is never decremented.
 
 Custom-design checkout uses `multipart/form-data`:
 
+> **Currently disabled.** The custom-design intake is turned off with
+> `CUSTOM_DESIGN_ENABLED=False` (see
+> [configuration.md](configuration.md)). The backend drops these fields
+> from the contract: they are neither validated nor priced, and stale
+> clients that still send them get a normal `201`. The response field
+> `custom_design` remains, so historical orders with designs keep
+> rendering. Re-enable with `CUSTOM_DESIGN_ENABLED=True` — the contract
+> below becomes active again.
+
 | Field | Requirement |
 | --- | --- |
 | `items` | JSON string of submitted items |
