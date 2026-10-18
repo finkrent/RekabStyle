@@ -27,7 +27,9 @@ the WSGI server dependency.
    ```
 
 5. Proxy HTTPS traffic to Django. Serve `/static/` from `STATIC_ROOT` and
-   `/media/` from `MEDIA_ROOT`, including `media/designs/` custom-design images.
+   `/media/` from `MEDIA_ROOT`, including `media/designs/` custom-design
+   images (kept for historical orders; the custom-design intake is disabled
+   by default via `CUSTOM_DESIGN_ENABLED=False`).
 6. Forward `X-Forwarded-Proto`. With debug disabled, Django secures session,
    CSRF, and refresh cookies.
 

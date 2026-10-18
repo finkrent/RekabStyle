@@ -2,8 +2,9 @@
 
 RekabStyle is an API-first online shop backend built with Django, Django REST
 Framework, PostgreSQL, and `uv`. It provides phone-and-OTP authentication,
-catalog browsing, cart-less checkout, optional custom-design orders, Zibal
-payments, Kavenegar customer SMS, and Django Admin operations.
+catalog browsing, cart-less checkout, optional feature-flagged custom-design
+orders (currently disabled), Zibal payments, Kavenegar customer SMS, and
+Django Admin operations.
 
 There is no frontend in this repository. See [docs/frontend.md](docs/frontend.md)
 for the integration contract.

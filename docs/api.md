@@ -1,8 +1,10 @@
 # API Reference
 
-Base URL: `/api/v1/`. Most requests and responses are JSON. Custom-design order
-creation uses `multipart/form-data`; the payment callback may redirect the
-browser. `GET /api/v1/` returns a public index of the catalog routes.
+Base URL: `/api/v1/`. Most requests and responses are JSON; order creation is
+`application/json`. The payment callback may redirect the browser. The
+custom-design flow (currently disabled — see [configuration.md](configuration.md))
+uses `multipart/form-data` when enabled. `GET /api/v1/` returns a public index
+of the catalog routes.
 
 ## Conventions
 
@@ -402,7 +404,9 @@ receive every order plus customer and payment fields. Order object:
 - `custom_design` is `null`, or an object
   `{ "description", "surcharge_percent", "status", "order_items": [ids], "images": [{"position", "image"}], "created_at" }`.
   Design statuses are `pending`, `in_review`, `approved`, `rejected`,
-  `completed`; only `pending` is set today.
+  `completed`; only `pending` is set today. While the custom-design intake is
+  disabled (`CUSTOM_DESIGN_ENABLED=False`), newly placed orders always return
+  `null` here; the object appears only on historical orders.
 - Staff responses add `customer_phone_number`, `customer_national_id`,
   `customer_first_name`, `customer_last_name`, and `payments`
   (`id`, `amount`, `status`, `authority`, `paid_at`, `created_at`).
