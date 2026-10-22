@@ -68,8 +68,8 @@ const order = await api("/orders/", {
         quantity: 2,
         subcategory_id: 2,
         selected_options: [
-          { option_id: 10, choice_id: 2 },
-          { option_id: 11, value: "پژو ۲۰۷" },
+          { option_key: "car_type", choice_key: "offroad" },
+          { option_key: "car_model", value: "پژو ۲۰۷" },
         ],
       },
     ],
@@ -78,9 +78,10 @@ const order = await api("/orders/", {
 });
 ```
 
-`option_id`/`choice_id` are the numeric ids from the product detail
-`options`. `subcategory_id` and `selected_options` are optional; required
-attributes (per the product detail response) must all be submitted.
+`option_key`/`choice_key` are the stable string keys from the product detail
+`options`; ids are not part of the API. `subcategory_id` and
+`selected_options` are optional; required attributes (per the product detail
+response) must all be submitted.
 
 ### Cart updates
 

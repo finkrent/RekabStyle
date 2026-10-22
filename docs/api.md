@@ -282,14 +282,13 @@ Option object inside `options`:
 
 ```json
 {
-  "id": 10,
   "key": "car_type",
   "label": "نوع خودرو",
   "type": "select",
   "required": true,
   "choices": [
-    {"id": 1, "key": "sedan", "label": "سواری", "price_delta": "0"},
-    {"id": 2, "key": "offroad", "label": "آفرود", "price_delta": "200000"}
+    {"key": "sedan", "label": "سواری", "price_delta": "0"},
+    {"key": "offroad", "label": "آفرود", "price_delta": "200000"}
   ]
 }
 ```
@@ -373,11 +372,9 @@ receive every order plus customer and payment fields. Order object:
       "total_price": "200000",
       "options": [
         {
-          "attribute_id": 10,
           "attribute_key": "car_type",
           "attribute_label": "نوع خودرو",
           "input_type": "select",
-          "choice_id": 2,
           "choice_key": "offroad",
           "choice_label": "آفرود",
           "text_value": "",
@@ -396,11 +393,12 @@ receive every order plus customer and payment fields. Order object:
 - `payment_status` is the newest payment's status (`pending`, `success`,
   `failed`) or `null`.
 - `options` on each item is an array of immutable purchase-time option
-  snapshots (`attribute_id`, `attribute_key`, `attribute_label`,
-  `input_type`, `choice_id`, `choice_key`, `choice_label`, `text_value`,
-  `price_delta`; `choice_id`/`choice_key`/`choice_label` are empty for text
-  options) or `[]`. Historical orders keep these values even after the
-  current attribute/choice definitions are edited or deactivated.
+  snapshots (`attribute_key`, `attribute_label`, `input_type`, `choice_key`,
+  `choice_label`, `text_value`, `price_delta`; `choice_key`/`choice_label`
+  are empty for text options) or `[]`. Attributes and choices are identified
+  by their stable keys — ids are not part of the API. Historical orders keep
+  these values even after the current attribute/choice definitions are
+  edited or deactivated.
 - `custom_design` is `null`, or an object
   `{ "description", "surcharge_percent", "status", "order_items": [ids], "images": [{"position", "image"}], "created_at" }`.
   Design statuses are `pending`, `in_review`, `approved`, `rejected`,
@@ -437,8 +435,8 @@ Requires a complete profile and at least one address. JSON body:
       "quantity": 1,
       "subcategory_id": 2,
       "selected_options": [
-        {"option_id": 10, "choice_id": 2},
-        {"option_id": 11, "value": "پژو ۲۰۷"}
+        {"option_key": "car_type", "choice_key": "offroad"},
+        {"option_key": "car_model", "value": "پژو ۲۰۷"}
       ]
     }
   ],
@@ -450,7 +448,7 @@ Requires a complete profile and at least one address. JSON body:
 | --- | --- |
 | `items` | Required, at least one entry; `product_id` must reference an active product; `quantity` is 1–99 |
 | `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
-| `items[].selected_options` | Optional list of `{"option_id": <attribute id from the product detail options>, "choice_id": <choice id>}` for `select` attributes, or `{"option_id": <id>, "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters) |
+| `items[].selected_options` | Optional list of `{"option_key": "<attribute key from the product detail options>", "choice_key": "<choice key>"}` for `select` attributes, or `{"option_key": "<attribute key>", "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters). Attributes and choices are addressed by their stable keys, never ids |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
 
 Option validation is fully generic (nothing is hardcoded per attribute
@@ -458,7 +456,7 @@ key): every active required attribute of the reference subcategory must be
 submitted and optional ones may be omitted; attributes must be active and
 belong to the reference subcategory; choices must belong to the submitted
 attribute; `select` attributes reject text values, `text` attributes
-reject choice ids; duplicate submissions for one attribute, unknown
+reject choice keys; duplicate submissions for one attribute, unknown
 fields (including client-supplied prices), and invalid types are
 rejected. Client-supplied prices are never trusted.
 
@@ -475,7 +473,7 @@ time. Duplicate lines are not merged and stock is never decremented.
 | Status | Response |
 | --- | --- |
 | `201` | The created order object (staff get the staff shape) |
-| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 99 is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
+| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 'nope' is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
 | `404` | Foreign `address_id` |
 
 Custom-design checkout uses `multipart/form-data`:

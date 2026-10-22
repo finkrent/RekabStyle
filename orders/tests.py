@@ -817,15 +817,15 @@ class OrderOptionsTests(OrderTestBase):
 
     def _valid_options(self):
         return [
-            {"option_id": self.car_type.pk, "choice_id": self.offroad.pk},
-            {"option_id": self.car_model.pk, "value": "Peugeot 207"},
+            {"option_key": "car_type", "choice_key": "offroad"},
+            {"option_key": "car_model", "value": "Peugeot 207"},
         ]
 
     def test_valid_select_and_text_options_are_accepted_and_priced(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": self.piece_count.pk, "choice_id": self.four_piece.pk}
+            {"option_key": "piece_count", "choice_key": "four_piece"}
         ]
         response = self._checkout([self._item(options, quantity=2)])
         self.assertEqual(response.status_code, 201)
@@ -843,7 +843,7 @@ class OrderOptionsTests(OrderTestBase):
     def test_missing_required_select_attribute_rejected(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
-        options = [{"option_id": self.car_model.pk, "value": "Peugeot 207"}]
+        options = [{"option_key": "car_model", "value": "Peugeot 207"}]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
@@ -851,16 +851,16 @@ class OrderOptionsTests(OrderTestBase):
     def test_missing_required_text_attribute_rejected(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
-        options = [{"option_id": self.car_type.pk, "choice_id": self.sedan.pk}]
+        options = [{"option_key": "car_type", "choice_key": "sedan"}]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
 
-    def test_invalid_choice_id_rejected(self):
+    def test_invalid_choice_key_rejected(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": self.piece_count.pk, "choice_id": 999999}
+            {"option_key": "piece_count", "choice_key": "does_not_exist"}
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
@@ -878,7 +878,7 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": foreign_attribute.pk, "choice_id": 1}
+            {"option_key": "color", "choice_key": "red"}
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
@@ -897,11 +897,41 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": self.car_type.pk, "choice_id": self.sedan.pk}
+            {"option_key": "car_type", "choice_key": "sedan"}
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
+
+    def test_unknown_option_key_rejected(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        options = self._valid_options() + [
+            {"option_key": "no_such_option", "choice_key": "x"}
+        ]
+        response = self._checkout([self._item(options)])
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.filter(user=user).exists())
+
+    def test_legacy_id_fields_are_rejected(self):
+        """option_id/choice_id are gone from the contract; keys only."""
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        options = [{"option_id": self.car_type.pk, "choice_id": self.offroad.pk}]
+        response = self._checkout([self._item(options)])
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.filter(user=user).exists())
+
+    def test_response_options_expose_keys_not_ids(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self._checkout([self._item(self._valid_options())])
+        self.assertEqual(response.status_code, 201)
+        for opt in response.data["items"][0]["options"]:
+            self.assertNotIn("attribute_id", opt)
+            self.assertNotIn("choice_id", opt)
+            self.assertIn("attribute_key", opt)
+            self.assertIn("input_type", opt)
 
     def test_optional_attribute_can_be_omitted(self):
         user, address = self._make_complete_user()
@@ -914,8 +944,8 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = [
-            {"option_id": self.car_type.pk, "choice_id": self.sedan.pk},
-            {"option_id": self.car_model.pk, "value": "Peugeot 207"},
+            {"option_key": "car_type", "choice_key": "sedan"},
+            {"option_key": "car_model", "value": "Peugeot 207"},
         ]
         response = self._checkout([self._item(options, quantity=2)])
         self.assertEqual(response.status_code, 201)
@@ -926,18 +956,18 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = [
-            {"option_id": self.car_type.pk, "value": "anything"},
-            {"option_id": self.car_model.pk, "value": "Peugeot 207"},
+            {"option_key": "car_type", "value": "anything"},
+            {"option_key": "car_model", "value": "Peugeot 207"},
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
 
-    def test_text_attribute_rejects_choice_id(self):
+    def test_text_attribute_rejects_choice_key(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = [
-            {"option_id": self.car_type.pk, "choice_id": self.sedan.pk},
-            {"option_id": self.car_model.pk, "choice_id": self.sedan.pk},
+            {"option_key": "car_type", "choice_key": "sedan"},
+            {"option_key": "car_model", "choice_key": "sedan"},
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
@@ -946,7 +976,7 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": self.piece_count.pk, "choice_id": self.four_piece.pk, "price_delta": 1}
+            {"option_key": "piece_count", "choice_key": "four_piece", "price_delta": 1}
         ]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
@@ -1029,7 +1059,7 @@ class OrderOptionsTests(OrderTestBase):
     def test_failed_validation_creates_no_partial_order(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
-        options = [{"option_id": self.car_type.pk, "choice_id": self.offroad.pk}]
+        options = [{"option_key": "car_type", "choice_key": "offroad"}]
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
@@ -1039,7 +1069,7 @@ class OrderOptionsTests(OrderTestBase):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         options = self._valid_options() + [
-            {"option_id": self.piece_count.pk, "choice_id": self.four_piece.pk}
+            {"option_key": "piece_count", "choice_key": "four_piece"}
         ]
         response = self._checkout([self._item(options)])
         order = Order.objects.get(pk=response.data["id"])

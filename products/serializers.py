@@ -58,7 +58,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class AttributeChoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttributeChoice
-        fields = ["id", "key", "label", "price_delta"]
+        fields = ["key", "label", "price_delta"]
 
 
 class ProductOptionSerializer(serializers.ModelSerializer):
@@ -80,11 +80,10 @@ class ProductOptionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProductAttribute
-        fields = ["id", "key", "label", "type", "required", "choices", "price_delta"]
+        fields = ["key", "label", "type", "required", "choices", "price_delta"]
 
     def to_representation(self, instance):
         data = {
-            "id": instance.pk,
             "key": instance.key,
             "label": instance.name,
             "type": instance.input_type,

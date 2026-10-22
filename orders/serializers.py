@@ -31,19 +31,18 @@ class PaymentSummarySerializer(serializers.ModelSerializer):
 
 
 class OrderItemOptionSerializer(serializers.ModelSerializer):
-    """Immutable purchase-time snapshot of one selected product option."""
+    """Immutable purchase-time snapshot of one selected product option.
 
-    attribute_id = serializers.IntegerField(read_only=True, allow_null=True)
-    choice_id = serializers.IntegerField(read_only=True, allow_null=True)
+    Identified by the stable `attribute_key`/`choice_key` pair; ids are not
+    part of the API.
+    """
 
     class Meta:
         model = OrderItemOption
         fields = [
-            "attribute_id",
             "attribute_key",
             "attribute_label",
             "input_type",
-            "choice_id",
             "choice_key",
             "choice_label",
             "text_value",
@@ -151,7 +150,8 @@ class OrderItemInputSerializer(serializers.Serializer):
 
     `subcategory_id` selects the reference subcategory whose attributes
     apply to this item. Optional `selected_options` is a list of
-    {"option_id": <attribute id>, "choice_id" | "value": ...} entries.
+    {"option_key": <attribute key>, "choice_key" | "value": ...} entries;
+    attributes and choices are addressed by their stable keys, never ids.
     Attribute validation engages when `subcategory_id` or
     `selected_options` is present; legacy payloads without either keep
     their original behavior.
@@ -218,8 +218,10 @@ class OrderItemInputSerializer(serializers.Serializer):
                 )
             attrs["subcategory"] = subcategory
 
+        # Attributes are addressed by their stable `key` (unique per
+        # subcategory); ids never appear in the payload.
         attributes = {
-            attribute.pk: attribute
+            attribute.key: attribute
             for attribute in subcategory.attributes.filter(is_active=True).prefetch_related(
                 "choices"
             )
@@ -233,44 +235,44 @@ class OrderItemInputSerializer(serializers.Serializer):
                 }
             )
 
-        choices_by_id = {}
+        choices_by_key = {}
         for attribute in attributes.values():
             for choice in attribute.choices.all():
-                choices_by_id[(attribute.pk, choice.pk)] = choice
+                choices_by_key[(attribute.pk, choice.key)] = choice
 
-        seen = set()
+        seen_keys = set()
         options = []
         for raw in raw_options:
             if not isinstance(raw, dict):
                 raise serializers.ValidationError(
                     {"selected_options": "Each option must be an object."}
                 )
-            unknown = set(raw) - {"option_id", "choice_id", "value"}
+            unknown = set(raw) - {"option_key", "choice_key", "value"}
             if unknown:
                 raise serializers.ValidationError(
                     {"selected_options": f"Unexpected option fields: {sorted(unknown)}."}
                 )
-            try:
-                option_id = int(raw.get("option_id"))
-            except (TypeError, ValueError):
+            option_key = raw.get("option_key")
+            if not isinstance(option_key, str) or not option_key.strip():
                 raise serializers.ValidationError(
-                    {"selected_options": "option_id must be an attribute id."}
+                    {"selected_options": "option_key must be a non-empty string."}
                 )
-            if option_id in seen:
+            option_key = option_key.strip()
+            if option_key in seen_keys:
                 raise serializers.ValidationError(
                     {
                         "selected_options": (
-                            f"Duplicate submission for attribute {option_id}."
+                            f"Duplicate submission for attribute '{option_key}'."
                         )
                     }
                 )
-            seen.add(option_id)
-            attribute = attributes.get(option_id)
+            seen_keys.add(option_key)
+            attribute = attributes.get(option_key)
             if attribute is None:
                 raise serializers.ValidationError(
                     {
                         "selected_options": (
-                            f"Attribute {option_id} is unknown, inactive, or not "
+                            f"Attribute '{option_key}' is unknown, inactive, or not "
                             "part of the reference subcategory."
                         )
                     }
@@ -282,38 +284,37 @@ class OrderItemInputSerializer(serializers.Serializer):
                         {
                             "selected_options": (
                                 f"Attribute '{attribute.key}' is a select attribute; "
-                                "submit a choice_id instead of a text value."
+                                "submit a choice_key instead of a text value."
                             )
                         }
                     )
-                try:
-                    choice_id = int(raw.get("choice_id"))
-                except (TypeError, ValueError):
+                choice_key = raw.get("choice_key")
+                if not isinstance(choice_key, str) or not choice_key.strip():
                     raise serializers.ValidationError(
                         {
                             "selected_options": (
-                                f"Attribute '{attribute.key}' requires a valid choice_id."
+                                f"Attribute '{attribute.key}' requires a valid choice_key."
                             )
                         }
                     )
-                choice = choices_by_id.get((attribute.pk, choice_id))
+                choice = choices_by_key.get((attribute.pk, choice_key.strip()))
                 if choice is None:
                     raise serializers.ValidationError(
                         {
                             "selected_options": (
-                                f"Choice {choice_id} is not available for "
+                                f"Choice '{choice_key.strip()}' is not available for "
                                 f"attribute '{attribute.key}'."
                             )
                         }
                     )
                 options.append({"attribute": attribute, "choice": choice, "value": ""})
             else:
-                if raw.get("choice_id") not in (None, ""):
+                if raw.get("choice_key") not in (None, ""):
                     raise serializers.ValidationError(
                         {
                             "selected_options": (
                                 f"Attribute '{attribute.key}' is a text attribute; "
-                                "submit a value instead of a choice_id."
+                                "submit a value instead of a choice_key."
                             )
                         }
                     )
@@ -340,11 +341,11 @@ class OrderItemInputSerializer(serializers.Serializer):
                     {"attribute": attribute, "choice": None, "value": value.strip()}
                 )
 
-        selected_ids = {option["attribute"].pk for option in options}
+        selected_keys = {option["attribute"].key for option in options}
         missing = [
             attribute.name
             for attribute in attributes.values()
-            if attribute.is_required and attribute.pk not in selected_ids
+            if attribute.is_required and attribute.key not in selected_keys
         ]
         if missing:
             raise serializers.ValidationError(

@@ -506,16 +506,20 @@ class ProductOptionTests(TestCase):
         self.assertEqual(car_type["type"], "select")
         self.assertTrue(car_type["required"])
         self.assertNotIn("price_delta", car_type)
+        self.assertNotIn("id", car_type)
         self.assertEqual(
             [(choice["key"], choice["price_delta"]) for choice in car_type["choices"]],
             [("sedan", "0"), ("offroad", "200000")],
         )
+        for choice in car_type["choices"]:
+            self.assertNotIn("id", choice)
 
         car_model = options["car_model"]
         self.assertEqual(car_model["type"], "text")
         self.assertTrue(car_model["required"])
         self.assertEqual(car_model["price_delta"], "0")
         self.assertNotIn("choices", car_model)
+        self.assertNotIn("id", car_model)
 
         self.assertFalse(options["piece_count"]["required"])
 
