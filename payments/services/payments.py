@@ -67,6 +67,11 @@ def verify_and_complete_payment(track_id, user=None):
     if payment.status == Payment.STATUS_SUCCESS:
         return payment
 
+    # Zibal track ids are numeric; anything else can never verify (and would
+    # crash the gateway client with a ValueError), so reject it up front.
+    if not str(track_id).isdigit():
+        raise PaymentError("Payment not found.")
+
     result = verify_payment(track_id)
     payment.result_code = result["result"]
 

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model, login
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, status
@@ -101,10 +102,25 @@ class RequestOtpView(APIView):
         serializer.is_valid(raise_exception=True)
         phone_number = serializer.validated_data["phone_number"]
 
+        # SMS-abuse guard: the per-phone cooldown and hourly limits are
+        # defeated by rotating phone numbers, so also cap requests per
+        # client IP (best-effort through the Django cache).
+        ip_key = f"otp-ip:{request.META.get('REMOTE_ADDR', '')}"
+        ip_count = cache.get(ip_key, 0)
+        if ip_count >= settings.OTP["PER_IP_LIMIT"]:
+            return _otp_error_response(
+                OtpError(
+                    "Too many OTP requests from this device. Please try again later.",
+                    code="rate_limited",
+                )
+            )
+
         try:
             otp, code = request_otp(phone_number)
         except OtpError as exc:
             return _otp_error_response(exc)
+
+        cache.set(ip_key, ip_count + 1, 60 * 60)
 
         if settings.DEBUG and settings.OTP_DEBUG_RETURN_CODE:
             # Development helper: skip the real SMS and return the code in

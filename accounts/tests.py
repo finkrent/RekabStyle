@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -30,6 +31,11 @@ PHONE = "09123456789"
 
 
 class RequestOtpTests(TestCase):
+    def setUp(self):
+        # The per-IP OTP throttle counter lives in the cache, which persists
+        # across tests; reset it so each test starts from a clean state.
+        cache.clear()
+
     @patch(SMS_TARGET)
     def test_request_otp_success(self, mock_send):
         response = self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
@@ -78,6 +84,30 @@ class RequestOtpTests(TestCase):
         response = self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(OtpCode.objects.count(), 0)
+
+    @override_settings(OTP={**settings.OTP, "PER_IP_LIMIT": 2})
+    @patch(SMS_TARGET)
+    def test_per_ip_limit_blocks_rotated_phone_numbers(self, mock_send):
+        """Rotating phone numbers cannot bypass the per-IP SMS-abuse cap."""
+        # Two OTPs from one IP succeed (different phones, so the per-phone
+        # cooldown never triggers); the third request from that IP is 429.
+        self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
+        self.client.post(REQUEST_OTP_URL, {"phone_number": "09120000001"})
+        response = self.client.post(REQUEST_OTP_URL, {"phone_number": "09120000002"})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data["code"], "rate_limited")
+
+    @override_settings(OTP={**settings.OTP, "PER_IP_LIMIT": 1})
+    @patch(SMS_TARGET)
+    def test_per_ip_limit_is_per_ip(self, mock_send):
+        """A throttled IP does not affect other clients."""
+        self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
+        response = self.client.post(
+            REQUEST_OTP_URL,
+            {"phone_number": "09120000001"},
+            REMOTE_ADDR="10.0.0.9",
+        )
+        self.assertEqual(response.status_code, 200)
 
 
 class OtpSmsMessageTests(TestCase):

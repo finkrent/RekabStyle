@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Address
@@ -27,6 +27,7 @@ SMS_ADMIN_TARGET = "notifications.services.sms.send_order_paid_sms_to_admin"
 SMS_CUSTOM_ADMIN_TARGET = "notifications.services.sms.send_custom_order_paid_sms_to_admin"
 
 
+@override_settings(FRONTEND_PAYMENT_RESULT_URL="")
 class PaymentTestBase(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -47,7 +48,7 @@ class PaymentTestBase(TestCase):
             address=self.address,
         )
 
-    def _make_payment(self, track_id="TRK123"):
+    def _make_payment(self, track_id="12345"):
         return Payment.objects.create(
             order=self.order, amount=self.order.total_price, authority=track_id
         )
@@ -139,19 +140,74 @@ class VerifyPaymentTests(PaymentTestBase):
 
         self.client.force_login(self.user)
         response = self.client.post(
-            VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json"
+            VERIFY_URL, {"track_id": "12345"}, content_type="application/json"
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["order_status"], Order.STATUS_PAID)
 
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_PAID)
-        payment = Payment.objects.get(authority="TRK123")
+        payment = Payment.objects.get(authority="12345")
         self.assertEqual(payment.status, Payment.STATUS_SUCCESS)
         self.assertIsNotNone(payment.paid_at)
         mock_sms_customer.assert_called_once()
         mock_sms_admin.assert_called_once()
         mock_sms_custom_admin.assert_not_called()
+
+    @patch(SMS_CUSTOM_ADMIN_TARGET)
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_non_numeric_track_id_is_rejected(self, mock_verify, _m1, _m2, _m3):
+        """A payment whose authority is not numeric yields a 400, not a 500."""
+        self._make_payment(track_id="NOT-NUMERIC")
+        self.client.force_login(self.user)
+        response = self.client.post(
+            VERIFY_URL, {"track_id": "NOT-NUMERIC"}, content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_verify.assert_not_called()
+
+    @patch(SMS_CUSTOM_ADMIN_TARGET)
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_duplicate_callbacks_are_idempotent(
+        self, mock_verify, mock_sms_customer, mock_sms_admin, mock_sms_custom_admin
+    ):
+        """A second callback short-circuits: one verify call, one SMS each."""
+        self._make_payment()
+        mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
+
+        first = self.client.get(CALLBACK_URL, {"trackId": "12345", "success": "1"})
+        second = self.client.get(CALLBACK_URL, {"trackId": "12345", "success": "1"})
+        self.assertEqual(first.data["status"], "paid")
+        self.assertEqual(second.data["status"], "paid")
+
+        # The gateway is called exactly once; the replay is served from the
+        # stored success state, so no duplicate SMS is sent.
+        mock_verify.assert_called_once()
+        mock_sms_customer.assert_called_once()
+        mock_sms_admin.assert_called_once()
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PAID)
+
+    @override_settings(FRONTEND_PAYMENT_RESULT_URL="https://shop.example/result")
+    @patch(SMS_CUSTOM_ADMIN_TARGET)
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_callback_redirects_when_frontend_url_configured(
+        self, mock_verify, _m1, _m2, _m3
+    ):
+        """With FRONTEND_PAYMENT_RESULT_URL set the callback 302s to the
+        result page, carrying the payment outcome and order number."""
+        self._make_payment()
+        mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
+        response = self.client.get(CALLBACK_URL, {"trackId": "12345", "success": "1"})
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("status=paid", response.url)
+        self.assertIn(f"order_number={self.order.order_number}", response.url)
 
     @patch(SMS_CUSTOM_ADMIN_TARGET)
     @patch(SMS_ADMIN_TARGET)
@@ -169,7 +225,7 @@ class VerifyPaymentTests(PaymentTestBase):
 
         self.client.force_login(self.user)
         response = self.client.post(
-            VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json"
+            VERIFY_URL, {"track_id": "12345"}, content_type="application/json"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -183,12 +239,12 @@ class VerifyPaymentTests(PaymentTestBase):
         mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10 + 5000)
         self.client.force_login(self.user)
         response = self.client.post(
-            VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json"
+            VERIFY_URL, {"track_id": "12345"}, content_type="application/json"
         )
         self.assertEqual(response.status_code, 400)
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_FAILED)
-        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
+        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_FAILED)
 
     @patch(VERIFY_TARGET)
     def test_failed_payment_rejected(self, mock_verify):
@@ -196,12 +252,12 @@ class VerifyPaymentTests(PaymentTestBase):
         mock_verify.return_value = self._verify_result(paid=False, result=103, amount=0)
         self.client.force_login(self.user)
         response = self.client.post(
-            VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json"
+            VERIFY_URL, {"track_id": "12345"}, content_type="application/json"
         )
         self.assertEqual(response.status_code, 400)
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_FAILED)
-        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
+        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_FAILED)
 
     @patch(SMS_ADMIN_TARGET)
     @patch(SMS_CUSTOMER_TARGET)
@@ -211,8 +267,8 @@ class VerifyPaymentTests(PaymentTestBase):
         mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
         self.client.force_login(self.user)
 
-        first = self.client.post(VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json")
-        second = self.client.post(VERIFY_URL, {"track_id": "TRK123"}, content_type="application/json")
+        first = self.client.post(VERIFY_URL, {"track_id": "12345"}, content_type="application/json")
+        second = self.client.post(VERIFY_URL, {"track_id": "12345"}, content_type="application/json")
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
@@ -235,7 +291,7 @@ class VerifyPaymentTests(PaymentTestBase):
         self._make_payment()
         mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10)
         response = self.client.get(
-            CALLBACK_URL, {"trackId": "TRK123", "success": "1", "status": "1"}
+            CALLBACK_URL, {"trackId": "12345", "success": "1", "status": "1"}
         )
         self.assertEqual(response.status_code, 200)
         self.order.refresh_from_db()
@@ -246,14 +302,14 @@ class VerifyPaymentTests(PaymentTestBase):
         self._make_payment()
         mock_verify.return_value = self._verify_result(paid=False, result=202, amount=0)
         response = self.client.get(
-            CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
+            CALLBACK_URL, {"trackId": "12345", "success": "0", "status": "-1"}
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], "failed")
-        mock_verify.assert_called_once_with("TRK123")
+        mock_verify.assert_called_once_with("12345")
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_FAILED)
-        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_FAILED)
+        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_FAILED)
 
     @patch(SMS_ADMIN_TARGET)
     @patch(SMS_CUSTOMER_TARGET)
@@ -267,13 +323,13 @@ class VerifyPaymentTests(PaymentTestBase):
         )
 
         response = self.client.get(
-            CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
+            CALLBACK_URL, {"trackId": "12345", "success": "0", "status": "-1"}
         )
 
         self.assertEqual(response.data["status"], "paid")
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_PAID)
-        mock_verify.assert_called_once_with("TRK123")
+        mock_verify.assert_called_once_with("12345")
         mock_sms_customer.assert_called_once()
         mock_sms_admin.assert_called_once()
 
@@ -282,13 +338,13 @@ class VerifyPaymentTests(PaymentTestBase):
         self._make_payment()
 
         response = self.client.get(
-            CALLBACK_URL, {"trackId": "TRK123", "success": "0", "status": "-1"}
+            CALLBACK_URL, {"trackId": "12345", "success": "0", "status": "-1"}
         )
 
         self.assertEqual(response.data["status"], "failed")
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_PENDING)
-        self.assertEqual(Payment.objects.get(authority="TRK123").status, Payment.STATUS_PENDING)
+        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_PENDING)
 
 
 class ZibalServiceTests(TestCase):

@@ -195,6 +195,10 @@ OTP = {
     "COOLDOWN_SECONDS": _env_int("OTP_COOLDOWN_SECONDS", 90),
     "MAX_REQUESTS_PER_HOUR": _env_int("OTP_MAX_REQUESTS_PER_HOUR", 20),
     "MAX_VERIFY_ATTEMPTS": _env_int("OTP_MAX_VERIFY_ATTEMPTS", 5),
+    # Anonymous per-IP cap: rotating phone numbers defeats the per-phone
+    # limits, so the request-otp endpoint also throttles by client IP
+    # (Django-cache counter, best effort across processes).
+    "PER_IP_LIMIT": _env_int("OTP_PER_IP_LIMIT", 30),
 }
 
 # --- Kavenegar (SMS) ---

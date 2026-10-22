@@ -111,8 +111,16 @@ def create_order(user, items, address, design=None):
         multiplier = 1 + CUSTOM_DESIGN_SURCHARGE / Decimal("100")
         total = Decimal("0")
         customized_items = []
+        # Lock products in deterministic pk order first: two concurrent
+        # checkouts holding the same products in different orders would
+        # otherwise risk a lock-order deadlock. Items are still created in
+        # the client's submitted order below.
+        locked = {
+            item["product"].pk: _lock_product(item["product"])
+            for item in sorted(items, key=lambda i: i["product"].pk)
+        }
         for item in items:
-            product = _lock_product(item["product"])
+            product = locked[item["product"].pk]
             options = item.get("options") or []
             # unit price = base price + the sum of the selected choices'
             # current price deltas (frontend-supplied amounts never exist).
@@ -180,8 +188,13 @@ def update_order_items(order, items):
     with transaction.atomic():
         order.items.all().delete()
         total = Decimal("0")
+        # Same deterministic lock ordering as create_order (deadlock safety).
+        locked = {
+            item["product"].pk: _lock_product(item["product"])
+            for item in sorted(items, key=lambda i: i["product"].pk)
+        }
         for item in items:
-            product = _lock_product(item["product"])
+            product = locked[item["product"].pk]
             options = item.get("options") or []
             order_item = _create_order_item(
                 order,

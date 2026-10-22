@@ -22,6 +22,7 @@
 | `OTP_COOLDOWN_SECONDS` | `90` | Per-phone cooldown |
 | `OTP_MAX_REQUESTS_PER_HOUR` | `20` | Per-phone hourly limit |
 | `OTP_MAX_VERIFY_ATTEMPTS` | `5` | Failed attempts per OTP |
+| `OTP_PER_IP_LIMIT` | `30` | Anonymous per-IP cap on OTP requests (SMS-abuse guard) |
 | `OTP_DEBUG_RETURN_CODE` | `False` | Development-only code echo; requires debug |
 | `KAVENEGAR_API_KEY` | Required for real SMS | Kavenegar API key |
 | `KAVENEGAR_OTP_TEMPLATE` | `rekab-otp` | Approved OTP lookup template |
