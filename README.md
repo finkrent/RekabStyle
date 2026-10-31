@@ -24,8 +24,7 @@ Prerequisites: Python 3.12+, PostgreSQL, and [uv](https://docs.astral.sh/uv/).
 
 4. Create an admin account: either `uv run python manage.py createsuperuser`
    (interactive) or the idempotent seed `uv run python manage.py seed_superuser`
-   (random phone number, password `123456`; re-running skips when an admin
-   already exists).
+   (phone number `09123456789`, password `12345678`; re-running skips).
 
 5. Start the development server:
 
