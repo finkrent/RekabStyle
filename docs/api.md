@@ -223,8 +223,11 @@ unknown address returns `404`.
 
 ## Catalog
 
-All catalog endpoints are public (`200` without credentials). Only active
-records are exposed; inactive or unknown IDs return `404`.
+All catalog endpoints are public (`200` without credentials). Categories and
+subcategories expose only active records — inactive or unknown IDs return
+`404`. Products additionally expose inactive records: they appear in lists
+with `"is_active": false` (unknown IDs return `404`) so the storefront can
+render them as unavailable.
 
 ### GET /products/
 
@@ -334,16 +337,17 @@ Subcategory objects include a `slug`.
 ### GET /subcategories/{id}/
 
 `200` with one subcategory object (`id`, `name`, `slug`, `category`,
-`category_name`, `is_active`) and a `products` array containing that
-subcategory's active products. Each product uses the product object shape
-described above. The list endpoint does not embed products. Returns `404` for
-an unknown or inactive subcategory.
+`category_name`, `is_active`) and a `products` array of that subcategory's
+products — active and inactive (each carries `is_active`). Each product uses
+the product object shape described above. The list endpoint does not embed
+products. Returns `404` for an unknown or inactive subcategory.
 
 ### GET /best-sellers/
 
 Unpaginated array of product objects curated in Django Admin, ordered by
-position (lower first; ties break newest first). Inactive products never
-appear.
+position (lower first; ties break newest first). Inactive curated products
+appear with `"is_active": false` so the storefront can show them as
+unavailable.
 
 ## Orders
 

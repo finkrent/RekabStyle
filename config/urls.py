@@ -11,6 +11,8 @@ from drf_spectacular.views import (
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/accounts/", include("accounts.urls")),
+    # Catalog (products, categories, subcategories, best-sellers), mounted
+    # at /api/v1/ through the DefaultRouter in products/urls.py.
     path("api/v1/", include("products.urls")),
     path("api/v1/orders/", include("orders.urls")),
     path("api/v1/payments/", include("payments.urls")),
