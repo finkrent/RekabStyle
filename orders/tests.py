@@ -772,7 +772,6 @@ class OrderOptionsTests(OrderTestBase):
         )
         self.product.subcategories.add(self.subcategory)
         self.car_type = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
             key="car_type",
             name="Car type",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -785,14 +784,12 @@ class OrderOptionsTests(OrderTestBase):
             attribute=self.car_type, key="offroad", label="Offroad", price_delta=200000
         )
         self.car_model = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
             key="car_model",
             name="Car model",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=True,
         )
         self.piece_count = ProductAttribute.objects.create(
-            subcategory=self.subcategory,
             key="piece_count",
             name="Piece count",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -801,6 +798,9 @@ class OrderOptionsTests(OrderTestBase):
         self.four_piece = AttributeChoice.objects.create(
             attribute=self.piece_count, key="four_piece", label="4", price_delta=300000
         )
+        # Attributes are standalone rows; the subcategory selects the ones
+        # whose options apply to its products.
+        self.subcategory.attributes.add(self.car_type, self.car_model, self.piece_count)
 
     def _item(self, options=None, quantity=1, with_subcategory=True):
         item = {"product_id": self.product.pk, "quantity": quantity}
@@ -866,14 +866,17 @@ class OrderOptionsTests(OrderTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
 
-    def test_attribute_from_another_subcategory_rejected(self):
-        other = Subcategory.objects.create(category=self.category, name="Covers")
-        foreign_attribute = ProductAttribute.objects.create(
-            subcategory=other,
+    def test_attribute_not_selected_on_the_reference_subcategory_rejected(self):
+        # The attribute exists (and even has a choice), but the item's
+        # reference subcategory does not select it, so it is rejected.
+        color = ProductAttribute.objects.create(
             key="color",
             name="Color",
             input_type=ProductAttribute.INPUT_SELECT,
             is_required=False,
+        )
+        AttributeChoice.objects.create(
+            attribute=color, key="red", label="Red", price_delta=0
         )
         user, address = self._make_complete_user()
         self.client.force_login(user)
@@ -883,6 +886,35 @@ class OrderOptionsTests(OrderTestBase):
         response = self._checkout([self._item(options)])
         self.assertEqual(response.status_code, 400)
         self.assertFalse(Order.objects.filter(user=user).exists())
+
+    def test_shared_attribute_is_accepted_for_every_selecting_subcategory(self):
+        """One attribute definition serves several subcategories: the same
+        option_key/choice_key payload works on each of them."""
+        other = Subcategory.objects.create(category=self.category, name="Covers")
+        other_product = Product.objects.create(name="Cover Y", price=80000)
+        other_product.categories.add(self.category)
+        other_product.subcategories.add(other)
+        other.attributes.add(self.car_type)
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self._checkout(
+            [
+                self._item(self._valid_options()),
+                {
+                    "product_id": other_product.pk,
+                    "quantity": 1,
+                    "subcategory_id": other.pk,
+                    "selected_options": [
+                        {"option_key": "car_type", "choice_key": "offroad"}
+                    ],
+                },
+            ]
+        )
+        self.assertEqual(response.status_code, 201)
+        saved = {opt["attribute_key"] for opt in response.data["items"][1]["options"]}
+        self.assertEqual(saved, {"car_type"})
+        # 80000 base + 200000 offroad, sharing the attribute with the other item.
+        self.assertEqual(response.data["items"][1]["unit_price"], "280000")
 
     def test_inactive_attribute_rejected(self):
         self.car_model.is_active = False
@@ -1016,14 +1048,14 @@ class OrderOptionsTests(OrderTestBase):
     def test_multi_subcategory_options_require_reference(self):
         other = Subcategory.objects.create(category=self.category, name="Covers")
         self.product.subcategories.add(other)
-        # Both subcategories define attributes -> ambiguous, never guessed.
-        ProductAttribute.objects.create(
-            subcategory=other,
+        # Both subcategories have attributes selected -> ambiguous, never guessed.
+        color = ProductAttribute.objects.create(
             key="color",
             name="Color",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=False,
         )
+        other.attributes.add(color)
         user, address = self._make_complete_user()
         self.client.force_login(user)
         response = self._checkout([self._item(self._valid_options(), with_subcategory=False)])

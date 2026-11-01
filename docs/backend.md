@@ -42,19 +42,23 @@ The custom-design *intake* is feature-flagged: with
 design fields, while the models, admin, pricing logic, and historical designs
 stay fully functional — set the variable to `True` to restore the flow.
 
-Product attributes (options) are defined generically per subcategory in Django
-Admin: `ProductAttribute` (stable key, display name, `select`/`text` input
-type, required/active flags) with `AttributeChoice` rows carrying admin-set
-`price_delta` amounts. Checkout validates submitted selections against the
-active definitions, adds choice deltas to the backend-computed price
+Product attributes (options) are defined once in their own **Product
+attributes** Django Admin section: `ProductAttribute` (globally unique stable
+key, display name, `select`/`text` input type, required/active flags) with
+`AttributeChoice` rows carrying admin-set `price_delta` amounts. Each
+subcategory then selects the attributes it uses, so one attribute (for
+example `car_type`) can be shared by several subcategories without
+redefining its key or choices. Checkout validates submitted selections
+against the active attributes selected on the reference subcategory, adds
+choice deltas to the backend-computed price
 (`unit_price = base + sum(deltas)`), and stores immutable per-item snapshots
 (`OrderItemOption` keys, labels, text values, and applied deltas) that keep
-historical orders correct after later definition edits or deactivation.
-To configure them, open **Subcategories** in Django Admin and edit the target
-subcategory. Add a row in **Attributes**, save it, then use **Manage choices**
-on that row to add each choice's key, display label, and price delta. Choices
-apply only to `select` attributes; `text` attributes accept customer-entered
-values and have no configured choices.
+historical orders correct after later definition edits, detachment, or
+deactivation. To configure them, create the attribute under **Product
+attributes** (save it, then add each choice's key, display label, and price
+delta) and open **Subcategories** to select the attributes that apply.
+Choices apply only to `select` attributes; `text` attributes accept
+customer-entered values and have no configured choices.
 
 ## Payment and notification flow
 

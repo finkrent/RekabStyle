@@ -6,7 +6,7 @@ from django.db import IntegrityError
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
-from products.admin import ProductAdminForm, ProductAttributeInline
+from products.admin import ProductAdminForm
 from products.models import AttributeChoice, BestSeller, Category, Product, ProductAttribute, Subcategory
 
 
@@ -332,27 +332,27 @@ class AdminSlugTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         self.assertEqual(form.save().slug, "custom-audio")
 
-    def test_subcategory_attribute_inline_links_to_choice_editor(self):
-        subcategory = Subcategory.objects.create(
-            category=self.category, name="Mobile Phones"
-        )
+    def test_subcategory_admin_selects_shared_attributes(self):
+        """Attributes live in their own admin section; subcategories select
+        the shared attributes that apply to them."""
         attribute = ProductAttribute.objects.create(
-            subcategory=subcategory,
             key="color",
             name="Color",
             input_type=ProductAttribute.INPUT_SELECT,
         )
-        inline = ProductAttributeInline(Subcategory, admin.site)
+        subcategory_admin = admin.site._registry[Subcategory]
+        self.assertIn("attributes", subcategory_admin.filter_horizontal)
 
-        link = str(inline.choices_link(attribute))
-
-        self.assertIn(
-            reverse("admin:products_productattribute_change", args=[attribute.pk]),
-            link,
-        )
-        self.assertIn("Manage choices", link)
         attribute_admin = admin.site._registry[ProductAttribute]
         self.assertEqual(attribute_admin.inlines[0].model, AttributeChoice)
+        self.assertNotIn("subcategory", attribute_admin.list_display)
+
+        subcategory = Subcategory.objects.create(
+            category=self.category, name="Mobile Phones"
+        )
+        subcategory.attributes.add(attribute)
+        self.assertEqual(list(subcategory.attributes.all()), [attribute])
+        self.assertEqual(list(attribute.subcategories.all()), [subcategory])
 
 
 class SubcategoryDetailProductsTests(TestCase):
@@ -456,7 +456,6 @@ class ProductOptionTests(TestCase):
         self.product.subcategories.add(self.mats, self.covers)
 
         self.car_type = ProductAttribute.objects.create(
-            subcategory=self.mats,
             key="car_type",
             name="نوع خودرو",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -469,14 +468,12 @@ class ProductOptionTests(TestCase):
             attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
         )
         self.car_model = ProductAttribute.objects.create(
-            subcategory=self.mats,
             key="car_model",
             name="مدل خودرو",
             input_type=ProductAttribute.INPUT_TEXT,
             is_required=True,
         )
         self.piece_count = ProductAttribute.objects.create(
-            subcategory=self.mats,
             key="piece_count",
             name="تعداد تکه",
             input_type=ProductAttribute.INPUT_SELECT,
@@ -486,11 +483,15 @@ class ProductOptionTests(TestCase):
             attribute=self.piece_count, key="two_piece", label="۲ تکه", price_delta=0
         )
         self.hidden = ProductAttribute.objects.create(
-            subcategory=self.mats,
             key="legacy",
             name="Legacy",
             input_type=ProductAttribute.INPUT_TEXT,
             is_active=False,
+        )
+        # Attributes are standalone rows; the subcategory selects the ones
+        # whose options apply to its products.
+        self.mats.attributes.add(
+            self.car_type, self.car_model, self.piece_count, self.hidden
         )
 
     def _detail(self, **params):
@@ -543,3 +544,21 @@ class ProductOptionTests(TestCase):
         response = self._detail(subcategory="abc")
         self.assertEqual(response.status_code, 400)
         self.assertIn("subcategory", response.data)
+
+    def test_shared_attribute_applies_to_every_selecting_subcategory(self):
+        """One attribute definition serves several subcategories without
+        being redefined: it appears in each selecting subcategory's options."""
+        self.covers.attributes.add(self.car_type)
+        mats_keys = {
+            option["key"]
+            for option in self._detail(subcategory=self.mats.pk).data["options"]
+        }
+        covers_keys = {
+            option["key"]
+            for option in self._detail(subcategory=self.covers.pk).data["options"]
+        }
+        self.assertIn("car_type", mats_keys)
+        self.assertIn("car_type", covers_keys)
+        # car_model is selected on mats only.
+        self.assertIn("car_model", mats_keys)
+        self.assertNotIn("car_model", covers_keys)

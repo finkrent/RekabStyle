@@ -35,6 +35,16 @@ class Subcategory(TimestampedModel):
         max_length=150, unique_scope=("category",), allow_unicode=True, db_index=False
     )
     is_active = models.BooleanField("Active", default=True)
+    attributes = models.ManyToManyField(
+        "ProductAttribute",
+        blank=True,
+        related_name="subcategories",
+        verbose_name="Attributes",
+        help_text=(
+            "The attributes whose options apply to this subcategory's products "
+            "(one attribute may be selected by several subcategories)."
+        ),
+    )
 
     class Meta:
         ordering = ("name",)
@@ -181,12 +191,12 @@ class BestSeller(models.Model):
 
 
 class ProductAttribute(TimestampedModel):
-    """A generic product option defined at the subcategory level.
+    """A generic product option defined once and shared by subcategories.
 
-    All active products of a subcategory share the same attribute
-    definitions (for example a "car type" select attribute and an
-    independent "car model" text attribute). Attributes are managed in
-    Django Admin; nothing is hardcoded per product or per key.
+    Attributes live in their own Django Admin section and are selected on
+    the subcategories they apply to, so one attribute (for example a
+    "car type" select) can serve several subcategories without redefining
+    its key or choices. Nothing is hardcoded per product or per key.
     """
 
     INPUT_SELECT = "select"
@@ -196,14 +206,14 @@ class ProductAttribute(TimestampedModel):
         (INPUT_TEXT, "Text"),
     ]
 
-    subcategory = models.ForeignKey(
-        Subcategory,
-        on_delete=models.CASCADE,
-        related_name="attributes",
-        verbose_name="Subcategory",
-    )
     key = models.CharField(
-        "Key", max_length=64, help_text="Stable API identifier (e.g. car_type)."
+        "Key",
+        max_length=64,
+        unique=True,
+        help_text=(
+            "Stable API identifier (e.g. car_type); unique across the shop so "
+            "the same key means the same attribute on every subcategory."
+        ),
     )
     name = models.CharField("Name", max_length=120, help_text="Display name (e.g. نوع خودرو).")
     input_type = models.CharField("Input type", max_length=10, choices=INPUT_TYPE_CHOICES)
@@ -212,14 +222,9 @@ class ProductAttribute(TimestampedModel):
 
     class Meta:
         ordering = ("id",)
-        constraints = [
-            models.UniqueConstraint(
-                fields=("subcategory", "key"), name="uniq_attribute_key_per_subcategory"
-            )
-        ]
 
     def __str__(self):
-        return f"{self.subcategory} / {self.key}"
+        return self.key
 
 
 class AttributeChoice(TimestampedModel):

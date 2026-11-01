@@ -1,7 +1,5 @@
 ﻿from django import forms
 from django.contrib import admin
-from django.urls import reverse
-from django.utils.html import format_html
 
 from products.models import (
     AttributeChoice,
@@ -44,39 +42,16 @@ class CategoryAdmin(admin.ModelAdmin):
     inlines = [SubcategoryInline]
 
 
-class ProductAttributeInline(admin.TabularInline):
-    """Attributes managed directly on the subcategory admin page."""
-
-    model = ProductAttribute
-    fields = (
-        "key",
-        "name",
-        "input_type",
-        "is_required",
-        "is_active",
-        "choices_link",
-    )
-    readonly_fields = ("choices_link",)
-    extra = 1
-
-    @admin.display(description="Choices")
-    def choices_link(self, obj):
-        if not obj or not obj.pk:
-            return "Save the attribute first"
-        if obj.input_type != ProductAttribute.INPUT_SELECT:
-            return "Select attributes only"
-        url = reverse("admin:products_productattribute_change", args=(obj.pk,))
-        return format_html('<a href="{}">Manage choices</a>', url)
-
-
 @admin.register(Subcategory)
 class SubcategoryAdmin(admin.ModelAdmin):
-    fields = ("category", "name", "slug", "is_active")
+    """Subcategories select the shared attributes that apply to them."""
+
+    fields = ("category", "name", "slug", "is_active", "attributes")
     list_display = ("name", "category", "is_active", "created_at")
     list_filter = ("category", "is_active")
     search_fields = ("name",)
     list_select_related = ("category",)
-    inlines = [ProductAttributeInline]
+    filter_horizontal = ("attributes",)
 
 
 @admin.register(Product)
@@ -131,11 +106,19 @@ class AttributeChoiceInline(admin.TabularInline):
 
 @admin.register(ProductAttribute)
 class ProductAttributeAdmin(admin.ModelAdmin):
-    """Generic subcategory attributes: enable/disable, required flag,
-    input type, and their selectable choices."""
+    """Shared product options, defined once in their own section: enable/
+    disable, required flag, input type, their selectable choices, and the
+    subcategories that selected the attribute."""
 
-    list_display = ("key", "name", "subcategory", "input_type", "is_required", "is_active")
-    list_filter = ("input_type", "is_required", "is_active", "subcategory")
-    search_fields = ("key", "name", "subcategory__name")
-    list_select_related = ("subcategory",)
+    list_display = ("key", "name", "input_type", "is_required", "is_active", "selected_by")
+    list_filter = ("input_type", "is_required", "is_active")
+    search_fields = ("key", "name")
     inlines = [AttributeChoiceInline]
+
+    @admin.display(description="Selected by subcategories")
+    def selected_by(self, obj):
+        names = [subcategory.name for subcategory in obj.subcategories.all()]
+        return ", ".join(names) if names else "-"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).prefetch_related("subcategories")

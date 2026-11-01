@@ -298,11 +298,13 @@ Option object inside `options`:
 
 Text attributes carry `"type": "text"` and `"price_delta": "0"` instead of
 `choices`. The two supported input types are `select` and `text`;
-attributes such as `car_type` (select) and `car_model` (text) are
-independent rows managed in Django Admin per subcategory — the admin
-enables/disables them, marks them required, and configures every choice's
-`price_delta` (Toman). Inactive attributes never appear. Invalid, foreign,
-or ambiguous `?subcategory` values return `400` `{"subcategory": "<reason>"}`.
+attributes such as `car_type` (select) and `car_model` (text) are defined
+once in Django Admin and selected per subcategory (one attribute can be
+shared by several subcategories) — the admin enables/disables them, marks
+them required, and configures every choice's `price_delta` (Toman).
+Inactive attributes — and attributes not selected on the reference
+subcategory — never appear. Invalid, foreign, or ambiguous `?subcategory`
+values return `400` `{"subcategory": "<reason>"}`.
 
 ### GET /categories/
 
