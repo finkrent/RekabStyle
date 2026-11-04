@@ -5,7 +5,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from products.models import Category, Product, Subcategory, resolve_reference_subcategory
+from products.models import Category, Product, ProductAttribute, Subcategory, resolve_reference_subcategory
 from products.serializers import (
     CategorySerializer,
     ProductDetailSerializer,
@@ -108,11 +108,17 @@ class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == "retrieve":
             queryset = queryset.prefetch_related(
                 Prefetch(
+                    "attributes",
+                    queryset=ProductAttribute.objects.filter(is_active=True).prefetch_related(
+                        "choices"
+                    ),
+                ),
+                Prefetch(
                     "products",
                     queryset=Product.objects.all().prefetch_related(
                         "categories", "subcategories"
                     ),
-                )
+                ),
             )
         category = self.request.query_params.get("category")
         # Non-numeric values match nothing instead of crashing the ORM.

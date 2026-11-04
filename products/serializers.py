@@ -40,13 +40,6 @@ class SubcategorySerializer(serializers.ModelSerializer):
         fields = ["id", "name", "slug", "category", "category_name", "is_active"]
 
 
-class SubcategoryDetailSerializer(SubcategorySerializer):
-    products = ProductSerializer(many=True, read_only=True)
-
-    class Meta(SubcategorySerializer.Meta):
-        fields = [*SubcategorySerializer.Meta.fields, "products"]
-
-
 class CategorySerializer(serializers.ModelSerializer):
     subcategories = SubcategorySerializer(many=True, read_only=True)
 
@@ -96,6 +89,26 @@ class ProductOptionSerializer(serializers.ModelSerializer):
         else:
             data["price_delta"] = "0"
         return data
+
+
+class SubcategoryDetailSerializer(SubcategorySerializer):
+    """Subcategory detail with its product list and the options they share.
+
+    ``options`` is a single array of the active attributes selected on the
+    subcategory (the same shape ``ProductDetailSerializer`` exposes), so the
+    storefront can render the option controls on the subcategory product
+    listing without calling ``GET /products/{id}/`` per product. Options are a
+    property of the subcategory, not of individual products, so they appear
+    once instead of being duplicated inside every product.
+    """
+
+    options = ProductOptionSerializer(
+        source="attributes", many=True, read_only=True
+    )
+    products = ProductSerializer(many=True, read_only=True)
+
+    class Meta(SubcategorySerializer.Meta):
+        fields = [*SubcategorySerializer.Meta.fields, "options", "products"]
 
 
 class ProductDetailSerializer(ProductSerializer):

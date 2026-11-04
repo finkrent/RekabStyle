@@ -51,6 +51,21 @@ added to the product price); `text` options carry `"price_delta": "0"` and
 your own `value`. Products assigned to several subcategories need an
 explicit `?subcategory=<id>` on the detail call.
 
+#### When to call `GET /products/{id}/` (options caching)
+
+A customer who reaches a product **through a subcategory** already has
+everything to show the product detail page from `GET /subcategories/{id}/`:
+that response carries the product's core fields in `products` and its option
+controls in a single top-level `options` array (same shape as the product
+detail). Cache it and reuse it — do **not** call `GET /products/{id}/` from
+this flow.
+
+Call `GET /products/{id}/` only when the product is reached **outside** a
+subcategory context, where no options were cached — for example after a
+search (`GET /products/?q=...`), from best-sellers, a category listing, or a
+deep link / page refresh. Remember the options depend on the subcategory: use
+an explicit `?subcategory=<id>` when the product belongs to several.
+
 Product lists, subcategory details, and best-seller lists include unavailable
 products. When `is_active` is `false`, render the product card as unavailable
 (for example, gray it out) and disable its purchase controls. The backend

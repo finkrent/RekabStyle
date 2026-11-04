@@ -58,7 +58,14 @@ deactivation. To configure them, create the attribute under **Product
 attributes** (save it, then add each choice's key, display label, and price
 delta) and open **Subcategories** to select the attributes that apply.
 Choices apply only to `select` attributes; `text` attributes accept
-customer-entered values and have no configured choices.
+customer-entered values and have no configured choices. The storefront sees
+the active attributes of a subcategory through a single top-level `options`
+array on `GET /subcategories/{id}/` (same shape as the product detail) plus
+the same `options` on `GET /products/{id}/`; because options are a property of
+the subcategory shared by all its products, a customer browsing a subcategory
+can show product detail pages from the subcategory response alone, and the
+product detail endpoint remains the fallback for products reached outside a
+subcategory context (search, best-sellers, deep links).
 
 ## Payment and notification flow
 

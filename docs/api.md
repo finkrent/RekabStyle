@@ -339,10 +339,46 @@ Subcategory objects include a `slug`.
 ### GET /subcategories/{id}/
 
 `200` with one subcategory object (`id`, `name`, `slug`, `category`,
-`category_name`, `is_active`) and a `products` array of that subcategory's
-products — active and inactive (each carries `is_active`). Each product uses
-the product object shape described above. The list endpoint does not embed
-products. Returns `404` for an unknown or inactive subcategory.
+`category_name`, `is_active`), an `options` array, and a `products` array of
+that subcategory's products — active and inactive (each carries `is_active`).
+Each product uses the product object shape described above. The list endpoint
+does not embed products or options. Returns `404` for an unknown or inactive
+subcategory.
+
+`options` is a single array of the active attributes selected on the
+subcategory — the same shape and choice objects as `GET /products/{id}/`, so a
+customer browsing a subcategory gets the option controls (and product list) in
+one call without hitting the product detail endpoint per product. Options are a
+property of the subcategory shared by all its products, so they appear once
+rather than inside every product. Inactive attributes never appear.
+
+Example:
+
+```json
+{
+  "id": 5,
+  "name": "قالپاق",
+  "slug": "covers",
+  "category": 1,
+  "category_name": "خودرو",
+  "is_active": true,
+  "options": [
+    {
+      "key": "car_type",
+      "label": "نوع خودرو",
+      "type": "select",
+      "required": true,
+      "choices": [
+        {"key": "sedan", "label": "سواری", "price_delta": "0"},
+        {"key": "offroad", "label": "آفرود", "price_delta": "200000"}
+      ]
+    }
+  ],
+  "products": [
+    {"id": 12, "name": "قاب X", "slug": "x", "price": "1500000", "is_active": true}
+  ]
+}
+```
 
 ### GET /best-sellers/
 

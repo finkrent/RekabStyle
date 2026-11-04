@@ -391,6 +391,88 @@ class SubcategoryDetailProductsTests(TestCase):
             self.assertNotIn("products", item)
 
 
+class SubcategoryDetailOptionsTests(TestCase):
+    """GET /subcategories/{id}/ exposes the subcategory's active attributes
+    once as a top-level `options` array, shared by all its products."""
+
+    def setUp(self):
+        self.category = Category.objects.create(name="Auto")
+        self.mats = Subcategory.objects.create(
+            category=self.category, name="Floor Mats"
+        )
+        self.product = Product.objects.create(name="Mat X", price=1000000)
+        self.product.categories.add(self.category)
+        self.product.subcategories.add(self.mats)
+
+        self.car_type = ProductAttribute.objects.create(
+            key="car_type",
+            name="نوع خودرو",
+            input_type=ProductAttribute.INPUT_SELECT,
+            is_required=True,
+        )
+        AttributeChoice.objects.create(
+            attribute=self.car_type, key="sedan", label="سواری", price_delta=0
+        )
+        AttributeChoice.objects.create(
+            attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
+        )
+        self.car_model = ProductAttribute.objects.create(
+            key="car_model",
+            name="مدل خودرو",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_required=True,
+        )
+        self.hidden = ProductAttribute.objects.create(
+            key="legacy",
+            name="Legacy",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_active=False,
+        )
+        self.mats.attributes.add(self.car_type, self.car_model, self.hidden)
+
+    def test_detail_returns_options_next_to_products(self):
+        response = self.client.get(reverse("subcategory-detail", args=[self.mats.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("options", response.data)
+        self.assertIn("products", response.data)
+
+    def test_options_include_select_and_text_attributes_only_active(self):
+        response = self.client.get(reverse("subcategory-detail", args=[self.mats.pk]))
+        options = {option["key"]: option for option in response.data["options"]}
+        self.assertEqual(set(options), {"car_type", "car_model"})
+
+        car_type = options["car_type"]
+        self.assertEqual(car_type["type"], "select")
+        self.assertTrue(car_type["required"])
+        self.assertNotIn("price_delta", car_type)
+        self.assertEqual(
+            [(choice["key"], choice["price_delta"]) for choice in car_type["choices"]],
+            [("sedan", "0"), ("offroad", "200000")],
+        )
+
+        car_model = options["car_model"]
+        self.assertEqual(car_model["type"], "text")
+        self.assertEqual(car_model["price_delta"], "0")
+        self.assertNotIn("choices", car_model)
+
+    def test_options_shape_matches_product_detail(self):
+        sub_response = self.client.get(reverse("subcategory-detail", args=[self.mats.pk]))
+        detail_response = self.client.get(
+            reverse("product-detail", args=[self.product.pk]),
+            {"subcategory": self.mats.pk},
+        )
+        sub_options = {o["key"]: o for o in sub_response.data["options"]}
+        detail_options = {o["key"]: o for o in detail_response.data["options"]}
+        self.assertEqual(sub_options, detail_options)
+
+    def test_list_does_not_embed_options(self):
+        response = self.client.get(SUBCATEGORY_LIST_URL)
+        self.assertEqual(response.status_code, 200)
+        for item in response.data:
+            self.assertNotIn("options", item)
+
+
+
 class ProductPaginationTests(TestCase):
     """GET /products/ pages with a fixed size of 8 and stable ordering."""
 

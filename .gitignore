@@ -7,6 +7,7 @@ __pycache__/
 *.log
 db.sqlite3
 staticfiles/
+graphify-out/
 
 # Secrets - never commit
 .env
@@ -16,6 +17,7 @@ staticfiles/
 .vscode/
 .DS_Store
 Thumbs.db
+.clinerules/
 
 # Testing / coverage
 .coverage
