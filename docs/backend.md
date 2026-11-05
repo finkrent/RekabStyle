@@ -60,12 +60,17 @@ delta) and open **Subcategories** to select the attributes that apply.
 Choices apply only to `select` attributes; `text` attributes accept
 customer-entered values and have no configured choices. The storefront sees
 the active attributes of a subcategory through a single top-level `options`
-array on `GET /subcategories/{id}/` (same shape as the product detail) plus
-the same `options` on `GET /products/{id}/`; because options are a property of
-the subcategory shared by all its products, a customer browsing a subcategory
-can show product detail pages from the subcategory response alone, and the
-product detail endpoint remains the fallback for products reached outside a
-subcategory context (search, best-sellers, deep links).
+array on the product list filtered by `?subcategory=<id>` and on
+`GET /subcategories/{id}/` (same shape as the product detail), plus the same
+`options` on `GET /products/{id}/`; because options are a property of the
+subcategory shared by all its products, each listing returns them once
+instead of inside every product, a customer browsing a subcategory can show
+product detail pages from that listing alone, and the product detail endpoint
+remains the fallback for products reached outside a subcategory context
+(search, best-sellers, deep links). The admin prices a product against its
+default choice (`price_delta: "0"`), so the stored price is what the
+storefront displays before an option is selected; the API exposes no
+preselected option.
 
 ## Payment and notification flow
 

@@ -644,3 +644,132 @@ class ProductOptionTests(TestCase):
         # car_model is selected on mats only.
         self.assertIn("car_model", mats_keys)
         self.assertNotIn("car_model", covers_keys)
+
+
+class ProductListOptionsTests(TestCase):
+    """GET /products/?subcategory=<id> carries a top-level `options` array.
+
+    Options belong to the subcategory, not to individual products, so they
+    are returned once next to the paginated products instead of inside every
+    product; without the ?subcategory= filter the response keeps its
+    original shape.
+    """
+
+    def setUp(self):
+        self.category = Category.objects.create(name="Auto")
+        self.mats = Subcategory.objects.create(category=self.category, name="Floor Mats")
+        self.retired = Subcategory.objects.create(
+            category=self.category, name="Retired", is_active=False
+        )
+        self.product = Product.objects.create(name="Mat X", price=1000000)
+        self.product.categories.add(self.category)
+        self.product.subcategories.add(self.mats)
+        for index in range(1, 4):
+            product = Product.objects.create(name=f"Mat {index:02d}", price=1000000 + index)
+            product.categories.add(self.category)
+            product.subcategories.add(self.mats)
+
+        self.car_type = ProductAttribute.objects.create(
+            key="car_type",
+            name="نوع خودرو",
+            input_type=ProductAttribute.INPUT_SELECT,
+            is_required=True,
+        )
+        AttributeChoice.objects.create(
+            attribute=self.car_type, key="sedan", label="سواری", price_delta=0
+        )
+        AttributeChoice.objects.create(
+            attribute=self.car_type, key="offroad", label="آفرود", price_delta=200000
+        )
+        self.car_model = ProductAttribute.objects.create(
+            key="car_model",
+            name="مدل خودرو",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_required=True,
+        )
+        self.hidden = ProductAttribute.objects.create(
+            key="legacy",
+            name="Legacy",
+            input_type=ProductAttribute.INPUT_TEXT,
+            is_active=False,
+        )
+        # Attributes are standalone rows; the subcategory selects the ones
+        # whose options apply to its products.
+        self.mats.attributes.add(self.car_type, self.car_model, self.hidden)
+
+    def test_subcategory_filter_adds_top_level_options(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.mats.pk})
+        self.assertEqual(response.status_code, 200)
+        # The pagination envelope is preserved; options sit next to results.
+        self.assertEqual(
+            set(response.data), {"count", "next", "previous", "results", "options"}
+        )
+        self.assertEqual(response.data["count"], 4)
+        self.assertEqual(len(response.data["results"]), 4)
+
+        options = {option["key"]: option for option in response.data["options"]}
+        self.assertEqual(set(options), {"car_type", "car_model"})
+
+        car_type = options["car_type"]
+        self.assertEqual(car_type["type"], "select")
+        self.assertTrue(car_type["required"])
+        self.assertNotIn("price_delta", car_type)
+        self.assertEqual(
+            [(choice["key"], choice["price_delta"]) for choice in car_type["choices"]],
+            [("sedan", "0"), ("offroad", "200000")],
+        )
+
+        car_model = options["car_model"]
+        self.assertEqual(car_model["type"], "text")
+        self.assertEqual(car_model["price_delta"], "0")
+        self.assertNotIn("choices", car_model)
+
+    def test_list_options_match_product_detail_options(self):
+        list_response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.mats.pk})
+        detail_response = self.client.get(
+            reverse("product-detail", args=[self.product.pk]),
+            {"subcategory": self.mats.pk},
+        )
+        self.assertEqual(list_response.data["options"], detail_response.data["options"])
+
+    def test_products_do_not_embed_options(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.mats.pk})
+        for item in response.data["results"]:
+            self.assertNotIn("options", item)
+
+    def test_inactive_attributes_are_not_returned(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.mats.pk})
+        keys = [option["key"] for option in response.data["options"]]
+        self.assertNotIn("legacy", keys)
+
+    def test_without_subcategory_there_is_no_options_key(self):
+        response = self.client.get(PRODUCT_LIST_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("options", response.data)
+
+    def test_search_without_subcategory_has_no_options_key(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"q": "Mat"})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("options", response.data)
+
+    def test_blank_subcategory_param_has_no_options_key(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": ""})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("options", response.data)
+
+    def test_unknown_subcategory_returns_empty_options(self):
+        response = self.client.get(
+            PRODUCT_LIST_URL, {"subcategory": self.mats.pk + 100}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["options"], [])
+
+    def test_non_numeric_subcategory_returns_empty_options(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": "abc"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["options"], [])
+
+    def test_inactive_subcategory_returns_empty_options(self):
+        response = self.client.get(PRODUCT_LIST_URL, {"subcategory": self.retired.pk})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["options"], [])

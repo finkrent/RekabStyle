@@ -269,6 +269,14 @@ same availability field is returned for nested subcategory products and
 best-seller products. The storefront should show them as unavailable and
 disable purchase. Checkout rejects inactive products.
 
+When the `subcategory` filter is provided, the paginated response also carries
+a top-level `options` array — the active attributes of that subcategory, with
+the same option and choice objects as `GET /products/{id}/`. Options belong to
+the subcategory and are shared by all its products, so they appear once next to
+`results` instead of inside every product. A filter value that matches nothing
+(unknown or inactive id) returns `"options": []`. Without the `subcategory`
+filter — for example in a plain or search listing — the key is not present.
+
 ### GET /products/{id}/
 
 `200` with one product object plus an `options` array (the active

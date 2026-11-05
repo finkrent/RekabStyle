@@ -9,6 +9,7 @@ from products.models import Category, Product, ProductAttribute, Subcategory, re
 from products.serializers import (
     CategorySerializer,
     ProductDetailSerializer,
+    ProductOptionSerializer,
     ProductSerializer,
     SubcategoryDetailSerializer,
     SubcategorySerializer,
@@ -32,7 +33,9 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     Filters: ?category=<id>, ?subcategory=<id>, ?q=<text>.
     The category/subcategory filters match any of the product's (many)
-    categories/subcategories.
+    categories/subcategories. With ?subcategory= the paginated list also
+    carries a top-level `options` array — the active attributes of that
+    subcategory, once for the whole result set (see _list_options).
     """
 
     serializer_class = ProductSerializer
@@ -71,6 +74,13 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             return ProductDetailSerializer
         return ProductSerializer
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        options = self._list_options()
+        if options is not None:
+            response.data["options"] = options
+        return response
+
     def retrieve(self, request, *args, **kwargs):
         product = self.get_object()
         context = self.get_serializer_context()
@@ -91,6 +101,30 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             )
         except ValueError as exc:
             raise ValidationError({"subcategory": str(exc)})
+
+    def _list_options(self):
+        """Top-level options for the ?subcategory= filter on the list.
+
+        Options belong to the subcategory, not to individual products, so the
+        paginated response carries them once next to ``results`` instead of
+        repeating them inside every product. Returns None when the filter is
+        absent so the response keeps its original shape (e.g. search), and an
+        empty list when the filter value matches nothing (mirroring the
+        filter semantics: non-numeric, unknown, or inactive ids).
+        """
+        requested = self.request.query_params.get("subcategory", "")
+        if not requested:
+            return None
+        if not requested.isdigit():
+            return []
+        try:
+            subcategory = Subcategory.objects.get(pk=requested, is_active=True)
+        except Subcategory.DoesNotExist:
+            return []
+        return ProductOptionSerializer(
+            subcategory.attributes.filter(is_active=True).prefetch_related("choices"),
+            many=True,
+        ).data
 
 
 class SubcategoryViewSet(viewsets.ReadOnlyModelViewSet):

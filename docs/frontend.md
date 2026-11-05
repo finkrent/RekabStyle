@@ -51,14 +51,23 @@ added to the product price); `text` options carry `"price_delta": "0"` and
 your own `value`. Products assigned to several subcategories need an
 explicit `?subcategory=<id>` on the detail call.
 
+When the list is filtered by `?subcategory=<id>`, the same `options` array is
+returned once at the top level of the paginated response, next to `results` —
+options belong to the subcategory and are shared by all its products, never
+inside individual products. The key is absent from unfiltered and search
+listings. Do not preselect any option on the product detail page: the
+customer must pick the required options themselves (`"required": true` marks
+them) before proceeding. The admin-configured default choice carries
+`"price_delta": "0"` and the product price is quoted for that default, so
+display the product price as-is until a choice is selected.
+
 #### When to call `GET /products/{id}/` (options caching)
 
 A customer who reaches a product **through a subcategory** already has
-everything to show the product detail page from `GET /subcategories/{id}/`:
-that response carries the product's core fields in `products` and its option
-controls in a single top-level `options` array (same shape as the product
-detail). Cache it and reuse it — do **not** call `GET /products/{id}/` from
-this flow.
+everything to show the product detail page: `GET /products/?subcategory=<id>`
+carries the product grid in `results` and the option controls in the
+top-level `options` (and `GET /subcategories/{id}/` embeds both as well).
+Cache them and reuse — do **not** call `GET /products/{id}/` from this flow.
 
 Call `GET /products/{id}/` only when the product is reached **outside** a
 subcategory context, where no options were cached — for example after a
