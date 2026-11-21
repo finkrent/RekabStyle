@@ -201,6 +201,14 @@ OTP = {
     "PER_IP_LIMIT": _env_int("OTP_PER_IP_LIMIT", 30),
 }
 
+# --- Website Rules and Regulations ---
+# Version identifier recorded with every sign-up consent. Bump this whenever
+# the published text changes; the acceptance rows keep the historical value so
+# each consent stays attributable to the rules in force at that date.
+TERMS = {
+    "CURRENT_VERSION": os.environ.get("TERMS_VERSION", "1.0"),
+}
+
 # --- Kavenegar (SMS) ---
 # All SMS goes through Kavenegar's verify/lookup.json, which can only send
 # templates created and approved in the Kavenegar panel; these names must

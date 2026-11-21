@@ -26,9 +26,14 @@ localhost ports 3000, but same-origin proxying is still recommended.
 1. Request an OTP at `/accounts/request-otp/`.
 2. Verify it at `/accounts/verify-otp/`.
 3. Store the returned access token in memory only.
-4. For a new phone, complete registration in the same browser session. The
-   response includes a new `access` token and sets the refresh cookie, so no
-   separate sign-in step is needed.
+4. For a new phone, complete registration in the same browser session. Send
+   the national ID together with `terms_accepted: true` — do this only when the
+   Website Rules and Regulations checkbox is checked, because the backend
+   rejects sign-up without it. The response includes a new `access` token and
+   sets the refresh cookie, so no separate sign-in step is needed. The backend
+   records which rules version the customer accepted; `GET /accounts/profile/`
+   reports it under `terms_acceptance`, so you can re-prompt when the published
+   version changes.
 5. Send `Authorization: Bearer <access>` on protected requests.
 
 Include `credentials: "include"`. On startup refresh once. On a `401`, refresh

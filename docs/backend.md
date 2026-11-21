@@ -30,7 +30,15 @@ should submit on Enter or an explicit search-button action.
 Users authenticate by normalized phone number and OTP. Codes are random, stored
 as salted hashes, expired, and protected by cooldown, hourly, and attempt limits.
 Existing users receive an access token and refresh cookie. New users complete
-registration with a unique valid national ID. Profile completion requires the
+registration with a unique valid national ID and a mandatory acceptance of the
+Website Rules and Regulations (`terms_accepted`). Each acceptance is written to
+`TermsAcceptance` in the same transaction that creates the user, snapshotting
+the rules version (`TERMS["CURRENT_VERSION"]`), the national ID, the timestamp,
+the client IP, and the user agent. The table is append-only: rows are read-only
+in Django Admin, protected from deletion, and unique per user and rules version,
+so a later rules change adds a new version instead of rewriting the old
+evidence. The profile API reports the latest acceptance; acceptance rows are
+never written or edited through the API. Profile completion requires the
 national ID, both names, and at least one address.
 
 Orders snapshot product names, prices, quantities, and shipping addresses.

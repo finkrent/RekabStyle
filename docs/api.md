@@ -135,15 +135,20 @@ Public, but requires the browser session created by `verify-otp` for a
 not-yet-registered phone.
 
 ```json
-{"national_id": "0012345679"}
+{"national_id": "0012345679", "terms_accepted": true}
 ```
 
-The national ID must be exactly 10 digits with a valid checksum.
+The national ID must be exactly 10 digits with a valid checksum. `terms_accepted`
+must be `true`: accepting the Website Rules and Regulations is mandatory at
+sign-up. The acceptance is stored as legal evidence together with the rules
+version in force at that moment, the national ID, the timestamp, the client IP,
+and the user agent, so a later rules change never rewrites what was agreed to.
+A missing or `false` flag returns `400` and creates no user.
 
 | Status | Response |
 | --- | --- |
-| `200` | `{"detail": "Registration completed. You are now logged in.", "logged_in": true, "profile_complete": false, "access": "<jwt>"}` plus the refresh cookie; the user row is created |
-| `400` | `{"national_id": ["Invalid national ID."]}` or `["National ID must be exactly 10 digits."]` |
+| `200` | `{"detail": "Registration completed. You are now logged in.", "logged_in": true, "profile_complete": false, "access": "<jwt>"}` plus the refresh cookie; the user row and its rules-acceptance record are created |
+| `400` | `{"national_id": ["Invalid national ID."]}` or `["National ID must be exactly 10 digits."]`; `{"terms_accepted": ["You must accept the Website Rules and Regulations to sign up."]}` when the rules checkbox was not accepted |
 | `403` | `{"detail": "Verify your phone number with an OTP first."}` — no pending sign-up session |
 | `409` | `{"detail": "An account with this national ID already exists. Please sign in with your phone number.", "code": "conflict"}` (or the phone-number variant) |
 
@@ -183,16 +188,24 @@ Bearer. Returns `200`:
   "addresses": [
     {"id": 1, "address": "Tehran, Vanak St. 1", "postal_code": "1234567890", "created_at": "…", "updated_at": "…"}
   ],
-  "profile_complete": true
+  "profile_complete": true,
+  "terms_acceptance": {"terms_version": "1.0", "accepted_at": "…"}
 }
 ```
+
+`terms_acceptance` is the latest Website Rules and Regulations acceptance
+(`null` when the account was created outside the sign-up flow, for example in
+Django Admin). Compare `terms_version` with the version you publish to detect
+that a customer accepted older rules; the backend keeps the full acceptance
+history.
 
 `401` when unauthenticated.
 
 ### PATCH /accounts/profile/
 
 Bearer. Accepts `first_name` and `last_name`. `phone_number`, `national_id`,
-`addresses`, `full_name`, and `profile_complete` are read-only and ignored.
+`addresses`, `full_name`, `profile_complete`, and `terms_acceptance` are
+read-only and ignored.
 Returns the updated profile (`200`).
 
 A complete profile — national ID, both names, and at least one address — is

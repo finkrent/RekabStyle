@@ -54,6 +54,10 @@ this in production.
 
 ## Behavior at a glance
 
+Sign-up requires accepting the Website Rules and Regulations (`terms_accepted`
+in the registration request). Each acceptance is stored with the rules version
+in force, the national ID, the timestamp, the client IP, and the user agent, so
+the rules a customer agreed to stay identifiable when the text changes.
 Checkout requires a national ID, both profile names, and at least one address.
 The backend has no cart: clients submit items at checkout. Product names, prices,
 quantities, and shipping addresses are snapshotted onto orders.

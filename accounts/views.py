@@ -20,6 +20,7 @@ from accounts.serializers import (
     VerifyOtpSerializer,
 )
 from accounts.services.otp import OtpError, request_otp, verify_otp
+from accounts.services.terms import record_terms_acceptance
 from notifications.services import sms
 
 User = get_user_model()
@@ -226,6 +227,12 @@ class VerifyOtpView(APIView):
             )
         ),
         403: OpenApiResponse(description="No verified-OTP session in progress."),
+        400: OpenApiResponse(
+            description=(
+                "Invalid national ID or the Website Rules and Regulations were "
+                "not accepted (terms_accepted must be true)."
+            )
+        ),
         409: OpenApiResponse(description="Phone number or national ID already registered."),
     },
 )
@@ -235,7 +242,9 @@ class CompleteRegistrationView(APIView):
     Requires a session that verified an OTP for a not-yet-registered phone
     number. Creates the user only when the national ID is valid and not used
     by another account (uniqueness: pre-check + transactional re-check + the
-    database-level unique constraint).
+    database-level unique constraint) and the Website Rules and Regulations
+    were accepted. The acceptance (rules version, national ID, IP, user
+    agent) is stored as legal evidence in the same transaction.
     """
 
     authentication_classes = []
@@ -265,6 +274,12 @@ class CompleteRegistrationView(APIView):
                     )
                 user = User.objects.create_user(
                     phone_number=phone_number, national_id=national_id
+                )
+                record_terms_acceptance(
+                    user,
+                    national_id=national_id,
+                    ip_address=request.META.get("REMOTE_ADDR"),
+                    user_agent=request.META.get("HTTP_USER_AGENT", ""),
                 )
         except IntegrityError as exc:
             return self._conflict(

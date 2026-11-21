@@ -24,6 +24,7 @@
 | `OTP_MAX_VERIFY_ATTEMPTS` | `5` | Failed attempts per OTP |
 | `OTP_PER_IP_LIMIT` | `30` | Anonymous per-IP cap on OTP requests (SMS-abuse guard) |
 | `OTP_DEBUG_RETURN_CODE` | `False` | Development-only code echo; requires debug |
+| `TERMS_VERSION` | `1.0` | Current Website Rules and Regulations version recorded with each sign-up acceptance; bump it when the published text changes |
 | `KAVENEGAR_API_KEY` | Required for real SMS | Kavenegar API key |
 | `KAVENEGAR_OTP_TEMPLATE` | `rekab-otp` | Approved OTP lookup template |
 | `KAVENEGAR_ORDER_PAID_CUSTOMER_TEMPLATE` | `rekab-order-paid` | Approved order-paid customer template |

@@ -1,6 +1,6 @@
 ﻿from rest_framework import serializers
 
-from accounts.models import Address, User
+from accounts.models import Address, TermsAcceptance, User
 from accounts.validators import normalize_phone_number, validate_national_id
 
 
@@ -25,9 +25,15 @@ class VerifyOtpSerializer(serializers.Serializer):
 
 
 class CompleteRegistrationSerializer(serializers.Serializer):
-    """Final sign-up step: the required, unique national ID."""
+    """Final sign-up step: the unique national ID and the rules consent."""
 
     national_id = serializers.CharField()
+    terms_accepted = serializers.BooleanField(
+        error_messages={
+            "required": "You must accept the Website Rules and Regulations to sign up.",
+            "invalid": "You must accept the Website Rules and Regulations to sign up.",
+        }
+    )
 
     def validate_national_id(self, value):
         value = str(value).strip()
@@ -38,6 +44,20 @@ class CompleteRegistrationSerializer(serializers.Serializer):
         except Exception as exc:
             raise serializers.ValidationError(str(exc))
         return value
+
+    def validate_terms_accepted(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "You must accept the Website Rules and Regulations to sign up."
+            )
+        return value
+
+
+class TermsAcceptanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TermsAcceptance
+        fields = ["terms_version", "accepted_at"]
+        read_only_fields = ["terms_version", "accepted_at"]
 
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -51,6 +71,9 @@ class ProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     addresses = AddressSerializer(many=True, read_only=True)
     profile_complete = serializers.BooleanField(source="profile_is_complete", read_only=True)
+    terms_acceptance = TermsAcceptanceSerializer(
+        source="latest_terms_acceptance", read_only=True
+    )
 
     class Meta:
         model = User
@@ -62,12 +85,19 @@ class ProfileSerializer(serializers.ModelSerializer):
             "full_name",
             "addresses",
             "profile_complete",
+            "terms_acceptance",
 
         ]
         # phone_number and national_id are identity fields, managed by the
         # registration flow / staff, not editable through the profile API.
-        # Addresses are managed through the /addresses/ endpoints.
-        read_only_fields = ["phone_number", "national_id", "addresses"]
+        # Addresses are managed through the /addresses/ endpoints, and rules
+        # acceptance is recorded by the sign-up flow only.
+        read_only_fields = [
+            "phone_number",
+            "national_id",
+            "addresses",
+            "terms_acceptance",
+        ]
 
     def get_full_name(self, obj) -> str:
         return obj.get_full_name()

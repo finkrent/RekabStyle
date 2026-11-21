@@ -96,6 +96,49 @@ class User(AbstractBaseUser, PermissionsMixin):
             and self.addresses.exists()
         )
 
+    @property
+    def latest_terms_acceptance(self):
+        """Newest Website Rules and Regulations acceptance, or None."""
+        return self.terms_acceptances.first()
+
+
+class TermsAcceptance(models.Model):
+    """Evidence that a user accepted the Website Rules and Regulations.
+
+    Append-only legal record: the rules version, the national ID and the client
+    metadata are snapshotted at acceptance time, so a later rules change or a
+    profile edit never rewrites what was actually agreed to. Rows are protected
+    from deletion together with their user.
+    """
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="terms_acceptances",
+        verbose_name="User",
+    )
+    national_id = models.CharField("National ID", max_length=10)
+    terms_version = models.CharField("Rules version", max_length=32)
+    accepted_at = models.DateTimeField(
+        "Accepted at", default=timezone.now, db_index=True
+    )
+    ip_address = models.GenericIPAddressField("IP address", null=True, blank=True)
+    user_agent = models.CharField("User agent", max_length=255, blank=True)
+
+    class Meta:
+        ordering = ("-accepted_at",)
+        verbose_name = "rules acceptance"
+        verbose_name_plural = "rules acceptances"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "terms_version"),
+                name="uniq_terms_acceptance_per_user_version",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.phone_number} accepted rules v{self.terms_version}"
+
 
 class Address(models.Model):
     """A customer address. A user can store multiple addresses."""

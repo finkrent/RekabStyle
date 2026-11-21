@@ -4,12 +4,14 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.models.deletion import ProtectedError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from accounts.models import Address, OtpCode
+from accounts.models import Address, OtpCode, TermsAcceptance
 from accounts.services.otp import request_otp
+from accounts.services.terms import record_terms_acceptance
 from notifications.services.sms import SmsError, send_otp_sms
 
 User = get_user_model()
@@ -182,17 +184,19 @@ class CompleteRegistrationTests(TestCase):
         response = self.client.post(VERIFY_OTP_URL, {"phone_number": phone, "otp": code})
         self.assertTrue(response.data["national_id_required"])
 
+    @staticmethod
+    def _payload(national_id=VALID_NATIONAL_ID_1):
+        return {"national_id": national_id, "terms_accepted": True}
+
     def test_requires_staged_signup(self):
         response = self.client.post(
-            COMPLETE_REGISTRATION_URL, {"national_id": VALID_NATIONAL_ID_1}
+            COMPLETE_REGISTRATION_URL, self._payload()
         )
         self.assertEqual(response.status_code, 403)
 
     def test_complete_registration_creates_user_and_logs_in(self):
         self._stage_signup()
-        response = self.client.post(
-            COMPLETE_REGISTRATION_URL, {"national_id": VALID_NATIONAL_ID_1}
-        )
+        response = self.client.post(COMPLETE_REGISTRATION_URL, self._payload())
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["logged_in"])
         user = User.objects.get(phone_number=PHONE)
@@ -202,7 +206,7 @@ class CompleteRegistrationTests(TestCase):
     def test_invalid_national_id_rejected(self):
         self._stage_signup()
         response = self.client.post(
-            COMPLETE_REGISTRATION_URL, {"national_id": INVALID_NATIONAL_ID}
+            COMPLETE_REGISTRATION_URL, self._payload(INVALID_NATIONAL_ID)
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(User.objects.count(), 0)
@@ -212,9 +216,7 @@ class CompleteRegistrationTests(TestCase):
             phone_number="09120000001", national_id=VALID_NATIONAL_ID_1
         )
         self._stage_signup()
-        response = self.client.post(
-            COMPLETE_REGISTRATION_URL, {"national_id": VALID_NATIONAL_ID_1}
-        )
+        response = self.client.post(COMPLETE_REGISTRATION_URL, self._payload())
         self.assertEqual(response.status_code, 409)
         self.assertIn("already exists", response.data["detail"])
         # Only the pre-existing account; no user was created.
@@ -223,11 +225,103 @@ class CompleteRegistrationTests(TestCase):
     def test_phone_race_rejected(self):
         self._stage_signup()
         User.objects.create_user(phone_number=PHONE)
+        response = self.client.post(COMPLETE_REGISTRATION_URL, self._payload())
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn("pending_signup_phone", self.client.session)
+
+    def test_terms_acceptance_is_required(self):
+        """Sign-up is rejected when the rules checkbox was not accepted."""
+        self._stage_signup()
         response = self.client.post(
             COMPLETE_REGISTRATION_URL, {"national_id": VALID_NATIONAL_ID_1}
         )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("terms_accepted", response.data)
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(TermsAcceptance.objects.count(), 0)
+
+    def test_false_terms_acceptance_is_rejected(self):
+        self._stage_signup()
+        response = self.client.post(
+            COMPLETE_REGISTRATION_URL,
+            {"national_id": VALID_NATIONAL_ID_1, "terms_accepted": False},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("terms_accepted", response.data)
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(TermsAcceptance.objects.count(), 0)
+
+    def test_string_true_terms_acceptance_is_accepted(self):
+        """DRF's BooleanField also parses the "true" string sent by some clients."""
+        self._stage_signup()
+        response = self.client.post(
+            COMPLETE_REGISTRATION_URL,
+            {"national_id": VALID_NATIONAL_ID_1, "terms_accepted": "true"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(TermsAcceptance.objects.count(), 1)
+
+    def test_complete_registration_records_terms_acceptance(self):
+        self._stage_signup()
+        before = timezone.now()
+        response = self.client.post(
+            COMPLETE_REGISTRATION_URL,
+            self._payload(),
+            REMOTE_ADDR="10.1.2.3",
+            HTTP_USER_AGENT="MimoTestAgent/1.0",
+        )
+        self.assertEqual(response.status_code, 200)
+        user = User.objects.get(phone_number=PHONE)
+        acceptance = TermsAcceptance.objects.get(user=user)
+        self.assertEqual(acceptance.national_id, VALID_NATIONAL_ID_1)
+        self.assertEqual(acceptance.terms_version, settings.TERMS["CURRENT_VERSION"])
+        self.assertGreaterEqual(acceptance.accepted_at, before)
+        self.assertEqual(acceptance.ip_address, "10.1.2.3")
+        self.assertEqual(acceptance.user_agent, "MimoTestAgent/1.0")
+        self.assertEqual(user.latest_terms_acceptance, acceptance)
+
+    @override_settings(TERMS={**settings.TERMS, "CURRENT_VERSION": "2.0"})
+    def test_terms_acceptance_uses_configured_version(self):
+        """A rules bump is recorded on new acceptances only."""
+        self._stage_signup()
+        response = self.client.post(COMPLETE_REGISTRATION_URL, self._payload())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(TermsAcceptance.objects.get().terms_version, "2.0")
+
+    def test_failed_registration_records_no_terms_acceptance(self):
+        User.objects.create_user(
+            phone_number="09120000001", national_id=VALID_NATIONAL_ID_1
+        )
+        self._stage_signup()
+        response = self.client.post(COMPLETE_REGISTRATION_URL, self._payload())
         self.assertEqual(response.status_code, 409)
-        self.assertNotIn("pending_signup_phone", self.client.session)
+        self.assertEqual(TermsAcceptance.objects.count(), 0)
+
+    def test_changed_rules_version_keeps_acceptance_history(self):
+        user = User.objects.create_user(
+            phone_number=PHONE, national_id=VALID_NATIONAL_ID_1
+        )
+        record_terms_acceptance(user, national_id=VALID_NATIONAL_ID_1)
+        with override_settings(TERMS={**settings.TERMS, "CURRENT_VERSION": "2.0"}):
+            latest = record_terms_acceptance(
+                user, national_id=VALID_NATIONAL_ID_1
+            )
+
+        self.assertEqual(
+            list(user.terms_acceptances.values_list("terms_version", flat=True)),
+            ["2.0", settings.TERMS["CURRENT_VERSION"]],
+        )
+        self.assertEqual(user.latest_terms_acceptance, latest)
+
+    def test_acceptance_prevents_user_deletion(self):
+        user = User.objects.create_user(
+            phone_number=PHONE, national_id=VALID_NATIONAL_ID_1
+        )
+        record_terms_acceptance(user, national_id=VALID_NATIONAL_ID_1)
+        with self.assertRaises(ProtectedError):
+            user.delete()
+        self.assertTrue(User.objects.filter(pk=user.pk).exists())
 
 
 class ProfileTests(TestCase):
@@ -242,6 +336,28 @@ class ProfileTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["phone_number"], PHONE)
         self.assertEqual(response.data["addresses"], [])
+        self.assertIsNone(response.data["terms_acceptance"])
+
+    def test_profile_reports_terms_acceptance(self):
+        record_terms_acceptance(
+            self.user, national_id=VALID_NATIONAL_ID_1
+        )
+        response = self.client.get(PROFILE_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["terms_acceptance"]["terms_version"],
+            settings.TERMS["CURRENT_VERSION"],
+        )
+
+    def test_terms_acceptance_is_read_only(self):
+        response = self.client.patch(
+            PROFILE_URL,
+            {"terms_acceptance": {"terms_version": "9.9"}},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["terms_acceptance"])
+        self.assertEqual(TermsAcceptance.objects.count(), 0)
 
     def test_update_profile(self):
         response = self.client.patch(
@@ -388,7 +504,8 @@ class JwtAuthTests(TestCase):
         code = mock_send.call_args[0][1]
         self.client.post(VERIFY_OTP_URL, {"phone_number": PHONE, "otp": code})
         response = self.client.post(
-            COMPLETE_REGISTRATION_URL, {"national_id": VALID_NATIONAL_ID_1}
+            COMPLETE_REGISTRATION_URL,
+            {"national_id": VALID_NATIONAL_ID_1, "terms_accepted": True},
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("access", response.data)
