@@ -12,7 +12,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Address
-from orders.models import CustomDesign, Order, OrderItemOption
+from orders.models import CustomDesign, DeliveryMethod, Order, OrderItemOption
 from orders.serializers import OrderCreateSerializer
 from orders.services.orders import create_order
 from payments.services.payments import initiate_payment
@@ -21,6 +21,7 @@ from products.models import AttributeChoice, Category, Product, ProductAttribute
 User = get_user_model()
 
 ORDER_LIST_URL = reverse("order-list")
+DELIVERY_METHODS_URL = reverse("delivery-method-list")
 
 VALID_NATIONAL_ID = "0012345679"
 VALID_NATIONAL_ID_2 = "0012345687"
@@ -40,6 +41,11 @@ class OrderTestBase(TestCase):
         self.category = Category.objects.create(name="General")
         self.product = Product.objects.create(name="Phone X", price=100000)
         self.product.categories.add(self.category)
+        # Free default method: keeps pre-existing total assertions focused on
+        # item pricing. Tests that need a charge create their own method.
+        self.delivery_method = DeliveryMethod.objects.create(
+            code="standard", name="Standard delivery", price_delta=0
+        )
 
     def _make_complete_user(self, phone_number="09123456789", national_id=VALID_NATIONAL_ID):
         """A user whose profile passes the checkout gate, with one address."""
@@ -59,6 +65,7 @@ class OrderTestBase(TestCase):
             user,
             items=[{"product": self.product, "quantity": quantity}],
             address=address,
+            delivery_method=self.delivery_method,
         )
 
 
@@ -71,6 +78,7 @@ class OrderCreateTests(OrderTestBase):
             {
                 "items": [{"product_id": self.product.pk, "quantity": 2}],
                 "address_id": address.pk,
+                "delivery_method": self.delivery_method.code,
             },
             content_type="application/json",
         )
@@ -89,7 +97,10 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
@@ -106,7 +117,10 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -123,6 +137,7 @@ class OrderCreateTests(OrderTestBase):
             {
                 "items": [{"product_id": self.product.pk, "quantity": 1}],
                 "address_id": other_address.pk,
+                "delivery_method": self.delivery_method.code,
             },
             content_type="application/json",
         )
@@ -144,7 +159,10 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -154,7 +172,10 @@ class OrderCreateTests(OrderTestBase):
     def test_anonymous_cannot_create_order(self):
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 401)
@@ -166,7 +187,10 @@ class OrderCreateTests(OrderTestBase):
         self.product.save()
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -276,6 +300,7 @@ class CheckoutCustomDesignTests(OrderTestBase):
                     for product, quantity in zip(products, quantities)
                 ]
             ),
+            "delivery_method": self.delivery_method.code,
         }
         if custom_product_ids is not None:
             data["custom_design_product_ids"] = json.dumps(custom_product_ids)
@@ -340,7 +365,10 @@ class CheckoutCustomDesignTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            {
+                "items": [{"product_id": self.product.pk, "quantity": 1}],
+                "delivery_method": self.delivery_method.code,
+            },
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
@@ -558,6 +586,7 @@ class CheckoutCustomDesignTests(OrderTestBase):
             ORDER_LIST_URL,
             {
                 "items": "not-json",
+                "delivery_method": self.delivery_method.code,
                 "custom_design_product_ids": json.dumps([1]),
                 "custom_design_description": "ok",
                 "images": [_image_file()],
@@ -624,6 +653,7 @@ class CustomDesignDisabledTests(OrderTestBase):
                 "custom_design_description": "Print my logo, matte finish",
                 "images": [_image_file()],
                 "address_id": address.pk,
+                "delivery_method": self.delivery_method.code,
             },
         )
         self.assertEqual(response.status_code, 201)
@@ -812,7 +842,9 @@ class OrderOptionsTests(OrderTestBase):
 
     def _checkout(self, items):
         return self.client.post(
-            ORDER_LIST_URL, {"items": items}, content_type="application/json"
+            ORDER_LIST_URL,
+            {"items": items, "delivery_method": self.delivery_method.code},
+            content_type="application/json",
         )
 
     def _valid_options(self):
@@ -1111,4 +1143,130 @@ class OrderOptionsTests(OrderTestBase):
             payment = initiate_payment(order, "http://testserver/api/v1/payments/callback/")
         self.assertEqual(payment.amount, order.total_price)
         self.assertEqual(mocked.call_args.kwargs["amount"], order.total_price)
+
+
+class DeliveryMethodTests(OrderTestBase):
+    """The delivery choice is made at checkout and priced by the backend."""
+
+    def _charged_method(self, price_delta=50000):
+        return DeliveryMethod.objects.create(
+            code="express", name="Express delivery", price_delta=price_delta
+        )
+
+    def _checkout(self, method, quantity=1):
+        return self.client.post(
+            ORDER_LIST_URL,
+            {
+                "items": [{"product_id": self.product.pk, "quantity": quantity}],
+                "delivery_method": method.code,
+            },
+            content_type="application/json",
+        )
+
+    def test_checkout_requires_delivery_method(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delivery_method", response.data)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_unknown_and_inactive_delivery_methods_are_rejected(self):
+        inactive = DeliveryMethod.objects.create(
+            code="pickup", name="Pickup", price_delta=0, is_active=False
+        )
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        for code in ("does-not-exist", inactive.code):
+            response = self.client.post(
+                ORDER_LIST_URL,
+                {
+                    "items": [{"product_id": self.product.pk, "quantity": 1}],
+                    "delivery_method": code,
+                },
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("delivery_method", response.data)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_delivery_fee_is_added_and_snapshotted(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self._checkout(method, quantity=2)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["delivery_method"], "express")
+        self.assertEqual(response.data["delivery_method_name"], "Express delivery")
+        self.assertEqual(response.data["delivery_fee"], "50000")
+        self.assertEqual(response.data["total_price"], "250000")
+        order = Order.objects.get(pk=response.data["id"])
+        self.assertEqual(order.delivery_method, method)
+        self.assertEqual(order.delivery_method_code, "express")
+        self.assertEqual(order.delivery_method_name, "Express delivery")
+        self.assertEqual(order.delivery_fee, 50000)
+        self.assertEqual(order.total_price, 250000)
+
+    def test_delivery_snapshot_survives_method_changes(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        order_id = self._checkout(method).data["id"]
+
+        method.name = "Express (renamed)"
+        method.price_delta = 90000
+        method.is_active = False
+        method.save()
+
+        detail = self.client.get(reverse("order-detail", args=[order_id]))
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data["delivery_method_name"], "Express delivery")
+        self.assertEqual(detail.data["delivery_fee"], "50000")
+        self.assertEqual(detail.data["total_price"], "150000")
+
+    def test_item_edit_keeps_the_saved_delivery_fee(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        order_id = self._checkout(method, quantity=2).data["id"]
+
+        method.price_delta = 90000
+        method.save()
+        response = self.client.patch(
+            reverse("order-detail", args=[order_id]),
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["delivery_fee"], "50000")
+        self.assertEqual(response.data["total_price"], "150000")
+
+    def test_payment_initiate_uses_total_including_delivery(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        order = Order.objects.get(pk=self._checkout(method).data["id"])
+        with mock.patch(
+            "payments.services.payments.request_payment", return_value="TRACK123"
+        ) as mocked:
+            payment = initiate_payment(order, "http://testserver/api/v1/payments/callback/")
+        self.assertEqual(payment.amount, 150000)
+        self.assertEqual(mocked.call_args.kwargs["amount"], 150000)
+
+    def test_active_methods_are_listed_publicly(self):
+        self._charged_method()
+        DeliveryMethod.objects.create(
+            code="pickup", name="Pickup", price_delta=0, is_active=False
+        )
+        response = self.client.get(DELIVERY_METHODS_URL)
+        self.assertEqual(response.status_code, 200)
+        by_code = {method["code"]: method for method in response.data}
+        self.assertEqual(set(by_code), {"standard", "express"})
+        self.assertEqual(by_code["express"]["name"], "Express delivery")
+        self.assertEqual(by_code["express"]["price_delta"], "50000")
+        self.assertEqual(by_code["standard"]["price_delta"], "0")
 

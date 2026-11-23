@@ -41,10 +41,12 @@ evidence. The profile API reports the latest acceptance; acceptance rows are
 never written or edited through the API. Profile completion requires the
 national ID, both names, and at least one address.
 
-Orders snapshot product names, prices, quantities, and shipping addresses.
-Checkout locks product rows and validates prices server-side. It does not merge
-duplicate lines or decrement stock. Custom designs are one-to-one with orders,
-link selected items, and store re-encoded Pillow images under `designs/YYYY/MM/`.
+Orders snapshot product prices, the selected delivery method, its fee, and
+shipping addresses. Checkout locks product rows and validates prices
+server-side; the delivery fee is added once per order and remains fixed if a
+method is later repriced. It does not merge duplicate lines or decrement stock.
+Custom designs are one-to-one with orders, link selected items, and store
+re-encoded Pillow images under `designs/YYYY/MM/`.
 The custom-design *intake* is feature-flagged: with
 `CUSTOM_DESIGN_ENABLED=False` (the default) the checkout endpoint ignores the
 design fields, while the models, admin, pricing logic, and historical designs

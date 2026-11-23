@@ -5,9 +5,10 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 
 from accounts.models import Address
-from orders.models import Order
+from orders.models import DeliveryMethod, Order
 from orders.serializers import (
     AdminOrderSerializer,
+    DeliveryMethodSerializer,
     OrderCreateSerializer,
     OrderSerializer,
     OrderUpdateSerializer,
@@ -30,6 +31,22 @@ def resolve_address(request, address_id):
     if address_id:
         return get_object_or_404(Address, pk=address_id, user=request.user)
     return request.user.addresses.first()
+
+
+class DeliveryMethodListView(generics.ListAPIView):
+    """GET /api/v1/delivery-methods/ - active delivery options and prices.
+
+    Public: the checkout page shows the choices and their charges before the
+    order is submitted. Prices here are display hints only; checkout always
+    recalculates from the saved configuration.
+    """
+
+    serializer_class = DeliveryMethodSerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = None
+
+    def get_queryset(self):
+        return DeliveryMethod.objects.filter(is_active=True)
 
 
 class OrderListCreateView(generics.ListCreateAPIView):
@@ -63,7 +80,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
         try:
             design = self._design_from(serializer.validated_data)
             order = create_order(
-                request.user, serializer.validated_data["items"], address, design=design
+                request.user,
+                serializer.validated_data["items"],
+                address,
+                serializer.validated_data["delivery_method"],
+                design=design,
             )
         except ImageValidationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

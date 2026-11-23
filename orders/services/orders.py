@@ -9,6 +9,7 @@ from accounts.models import Address
 from orders.models import (
     CustomDesign,
     CustomDesignImage,
+    DeliveryMethod,
     Order,
     OrderItem,
     OrderItemOption,
@@ -77,12 +78,15 @@ def _persist_item_options(order_item, options):
         )
 
 
-def create_order(user, items, address, design=None):
+def create_order(user, items, address, delivery_method, design=None):
     """Create an order atomically.
 
     `items` is a list of {"product": <Product>, "quantity": int}.
     `address` is the Address instance to ship to; its text and postal code are
     snapshotted onto the order so later address edits do not affect it.
+    `delivery_method` is the active DeliveryMethod chosen at checkout; its
+    code, name, and fee are snapshotted onto the order and the fee is added to
+    the total once (not per item).
 
     `design` (optional) activates the custom-design flow selected on the
     checkout page: {"product_ids": [int], "description": str,
@@ -95,6 +99,10 @@ def create_order(user, items, address, design=None):
     """
     if not isinstance(address, Address):
         raise OrderError("Please add an address before placing an order.")
+    if not isinstance(delivery_method, DeliveryMethod):
+        raise OrderError("Choose a delivery method.")
+    if not delivery_method.is_active:
+        raise OrderError("This delivery method is not available.")
     if not user.profile_is_complete:
         raise OrderError("Please complete your profile before placing an order.")
     if not items:
@@ -107,6 +115,10 @@ def create_order(user, items, address, design=None):
             user=user,
             shipping_address=address.address,
             shipping_postal_code=address.postal_code,
+            delivery_method=delivery_method,
+            delivery_method_code=delivery_method.code,
+            delivery_method_name=delivery_method.name,
+            delivery_fee=delivery_method.price_delta,
         )
         multiplier = 1 + CUSTOM_DESIGN_SURCHARGE / Decimal("100")
         total = Decimal("0")
@@ -142,7 +154,7 @@ def create_order(user, items, address, design=None):
             if is_custom:
                 customized_items.append(order_item)
             total += order_item.total_price
-        order.total_price = total
+        order.total_price = total + order.delivery_fee
         order.save(update_fields=["total_price"])
 
         if design:
@@ -170,7 +182,9 @@ def update_order_items(order, items):
     {"product": <Product>, "quantity": int}. The order's items become
     exactly this list - including a product adds it, omitting one removes
     it - and the total is recomputed with fresh price snapshots (the
-    purchase snapshot only freezes at checkout).
+    purchase snapshot only freezes at checkout). The delivery fee saved on
+    the order is kept as-is, even if the method was repriced or deactivated
+    since checkout.
 
     Raises OrderError when the order is not pending, already carries a
     custom design, has no items, or references an unavailable product.
@@ -205,7 +219,7 @@ def update_order_items(order, items):
             )
             _persist_item_options(order_item, options)
             total += order_item.total_price
-        order.total_price = total
+        order.total_price = total + order.delivery_fee
         order.save(update_fields=["total_price", "updated_at"])
     return order
 

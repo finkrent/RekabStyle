@@ -87,6 +87,11 @@ rejects checkout for inactive products even if a client submits one.
 
 ### Checkout (normal, JSON)
 
+Load `GET /delivery-methods/` when the checkout page opens and render the
+`name` and `price_delta` of each active method. The customer must choose one;
+send its `code` as `delivery_method`. Show the fee and the updated total, but
+treat them as estimates — the backend recalculates on submit.
+
 ```js
 const order = await api("/orders/", {
   method: "POST",
@@ -103,14 +108,20 @@ const order = await api("/orders/", {
       },
     ],
     address_id: 3,
+    delivery_method: "express",
   }),
 });
+// order.delivery_method       -> "express"
+// order.delivery_method_name  -> "Express delivery"
+// order.delivery_fee          -> "50000"
+// order.total_price           -> items + delivery fee
 ```
 
 `option_key`/`choice_key` are the stable string keys from the product detail
 `options`; ids are not part of the API. `subcategory_id` and
 `selected_options` are optional; required attributes (per the product detail
-response) must all be submitted.
+response) must all be submitted. `delivery_method` is required: omitting it or
+sending an unknown/deactivated code returns `400` and creates no order.
 
 ### Cart updates
 
@@ -132,6 +143,7 @@ Custom design requires `FormData`. Do not set `Content-Type` manually:
 const form = new FormData();
 form.append("items", JSON.stringify([{ product_id: 1, quantity: 2 }]));
 form.append("address_id", "3");
+form.append("delivery_method", "express");
 form.append("custom_design_product_ids", JSON.stringify([1]));
 form.append("custom_design_description", "Print my logo on the front");
 form.append("images", file);

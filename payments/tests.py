@@ -5,7 +5,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from accounts.models import Address
-from orders.models import CustomDesign, Order
+from orders.models import CustomDesign, DeliveryMethod, Order
 from orders.services.orders import create_order
 import payments.services.zibal as zibal_module
 from payments.models import Payment
@@ -42,10 +42,14 @@ class PaymentTestBase(TestCase):
         self.category = Category.objects.create(name="General")
         self.product = Product.objects.create(name="Phone X", price=100000)
         self.product.categories.add(self.category)
+        self.delivery_method = DeliveryMethod.objects.create(
+            code="standard", name="Standard delivery", price_delta=0
+        )
         self.order = create_order(
             self.user,
             items=[{"product": self.product, "quantity": 2}],
             address=self.address,
+            delivery_method=self.delivery_method,
         )
 
     def _make_payment(self, track_id="12345"):

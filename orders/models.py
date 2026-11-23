@@ -4,10 +4,41 @@ from pathlib import Path
 from uuid import uuid4
 
 from django.conf import settings
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
 from products.models import Product
+
+
+class DeliveryMethod(models.Model):
+    """A delivery option offered at checkout, with its price delta.
+
+    Staff manage these in Django Admin. Orders snapshot the chosen method's
+    code, name, and fee, so renaming, repricing, or deactivating a method never
+    rewrites historical orders.
+    """
+
+    code = models.SlugField("Code", max_length=32, unique=True)
+    name = models.CharField("Name", max_length=100)
+    price_delta = models.DecimalField(
+        "Price delta (Toman)",
+        max_digits=12,
+        decimal_places=0,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
+    is_active = models.BooleanField("Active", default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+        verbose_name = "delivery method"
+        verbose_name_plural = "delivery methods"
+
+    def __str__(self):
+        return f"{self.name} ({self.price_delta} Toman)"
 
 
 class Order(models.Model):
@@ -43,6 +74,25 @@ class Order(models.Model):
     )
     shipping_address = models.TextField("Shipping address", blank=True)
     shipping_postal_code = models.CharField("Shipping postal code", max_length=10, blank=True)
+    delivery_method = models.ForeignKey(
+        DeliveryMethod,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="orders",
+        verbose_name="Delivery method",
+    )
+    # Purchase-time snapshot: totals and displays never depend on the current
+    # DeliveryMethod row, which staff may rename or reprice later.
+    delivery_method_code = models.CharField(
+        "Delivery method code", max_length=32, blank=True
+    )
+    delivery_method_name = models.CharField(
+        "Delivery method name", max_length=100, blank=True
+    )
+    delivery_fee = models.DecimalField(
+        "Delivery fee (Toman)", max_digits=12, decimal_places=0, default=0
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

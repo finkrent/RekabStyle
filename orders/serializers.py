@@ -8,6 +8,7 @@ from accounts.models import Address
 from orders.models import (
     CustomDesign,
     CustomDesignImage,
+    DeliveryMethod,
     Order,
     OrderItem,
     OrderItemOption,
@@ -28,6 +29,13 @@ class PaymentSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = ["id", "amount", "status", "authority", "paid_at", "created_at"]
+
+
+class DeliveryMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryMethod
+        fields = ["code", "name", "price_delta"]
+        read_only_fields = ["code", "name", "price_delta"]
 
 
 class OrderItemOptionSerializer(serializers.ModelSerializer):
@@ -95,6 +103,10 @@ class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     payment_status = serializers.SerializerMethodField()
     custom_design = serializers.SerializerMethodField()
+    # The saved snapshot code, not the current DeliveryMethod row.
+    delivery_method = serializers.CharField(
+        source="delivery_method_code", read_only=True
+    )
 
     class Meta:
         model = Order
@@ -108,6 +120,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "custom_design",
             "shipping_address",
             "shipping_postal_code",
+            "delivery_method",
+            "delivery_method_name",
+            "delivery_fee",
             "created_at",
         ]
 
@@ -386,6 +401,11 @@ class OrderCreateSerializer(serializers.Serializer):
     declared as JSONFields and decoded in their validators so both bodies
     work identically.
 
+    `delivery_method` is the stable code of an active delivery method (see
+    GET /api/v1/delivery-methods/). The backend adds its configured price
+    delta once per order and snapshots the choice; client-supplied amounts
+    are never accepted.
+
     Custom design (the "Custom Design" checkbox on the order page):
     `custom_design_product_ids` selects which of the submitted items get the
     +30% surcharge; `custom_design_description` and 1-3 `images` are then
@@ -400,6 +420,16 @@ class OrderCreateSerializer(serializers.Serializer):
     items = serializers.JSONField()
     # Optional: defaults to the user's most recently added address.
     address_id = serializers.IntegerField(required=False, allow_null=True)
+    # Stable code from GET /api/v1/delivery-methods/; never a client price.
+    # The queryset filters inactive methods out, so a retired code is a 400.
+    delivery_method = serializers.SlugRelatedField(
+        slug_field="code",
+        queryset=DeliveryMethod.objects.filter(is_active=True),
+        error_messages={
+            "does_not_exist": "This delivery method is not available.",
+            "required": "Choose a delivery method.",
+        },
+    )
 
     # --- Custom design (checkbox on the checkout page) ---
     custom_design_product_ids = serializers.JSONField(required=False, allow_null=True)

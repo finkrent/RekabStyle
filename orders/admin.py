@@ -1,6 +1,13 @@
 ﻿from django.contrib import admin
 
-from orders.models import CustomDesign, CustomDesignImage, Order, OrderItem, OrderItemOption
+from orders.models import (
+    CustomDesign,
+    CustomDesignImage,
+    DeliveryMethod,
+    Order,
+    OrderItem,
+    OrderItemOption,
+)
 from payments.models import Payment
 
 
@@ -41,15 +48,43 @@ class PaymentInline(admin.StackedInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("order_number", "customer_phone", "status", "total_price", "created_at")
+    list_display = (
+        "order_number",
+        "customer_phone",
+        "status",
+        "delivery_method_name",
+        "total_price",
+        "created_at",
+    )
     list_filter = ("status", "created_at")
     search_fields = ("order_number", "user__phone_number", "user__national_id")
-    readonly_fields = ("order_number", "total_price", "shipping_address", "shipping_postal_code", "created_at", "updated_at")
+    readonly_fields = (
+        "order_number",
+        "total_price",
+        "shipping_address",
+        "shipping_postal_code",
+        "delivery_method",
+        "delivery_method_code",
+        "delivery_method_name",
+        "delivery_fee",
+        "created_at",
+        "updated_at",
+    )
     inlines = [OrderItemInline, CustomDesignInline, PaymentInline]
 
     @admin.display(description="Customer phone", ordering="user__phone_number")
     def customer_phone(self, obj):
         return obj.user.phone_number
+
+
+@admin.register(DeliveryMethod)
+class DeliveryMethodAdmin(admin.ModelAdmin):
+    """Configure the checkout delivery choices and their price deltas."""
+
+    list_display = ("name", "code", "price_delta", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "code")
+    ordering = ("name",)
 
 
 class CustomDesignImageInline(admin.TabularInline):

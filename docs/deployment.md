@@ -32,6 +32,10 @@ the WSGI server dependency.
    by default via `CUSTOM_DESIGN_ENABLED=False`).
 6. Forward `X-Forwarded-Proto`. With debug disabled, Django secures session,
    CSRF, and refresh cookies.
+7. Before accepting checkout requests, configure at least one active delivery
+   method in Django Admin under **Delivery methods**. Set its stable code, name,
+   price delta in Toman, and active status; checkout rejects inactive or unknown
+   methods.
 
 ## Verify and maintain
 

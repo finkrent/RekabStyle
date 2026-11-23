@@ -80,6 +80,7 @@ registration failures add a machine-readable `code` (`cooldown`, `rate_limited`,
 | GET | `/api/v1/categories/{id}/subcategories/` | Public |
 | GET | `/api/v1/subcategories/`, `/api/v1/subcategories/{id}/` | Public |
 | GET | `/api/v1/best-sellers/` | Public |
+| GET | `/api/v1/delivery-methods/` | Public |
 | GET, POST | `/api/v1/orders/` | Bearer |
 | GET, PATCH | `/api/v1/orders/{id}/` | Bearer |
 | POST | `/api/v1/payments/initiate/` | Bearer |
@@ -408,6 +409,26 @@ position (lower first; ties break newest first). Inactive curated products
 appear with `"is_active": false` so the storefront can show them as
 unavailable.
 
+## Delivery methods
+
+### GET /delivery-methods/
+
+Public, unpaginated array of the active delivery choices. Each object carries
+the stable `code` (send this at checkout), the display `name`, and the
+`price_delta` in Toman:
+
+```json
+[
+  {"code": "express", "name": "Express delivery", "price_delta": "50000"},
+  {"code": "standard", "name": "Standard delivery", "price_delta": "0"}
+]
+```
+
+Staff configure the choices and their charges under **Delivery methods** in
+Django Admin. Deactivated methods disappear from this list and can no longer
+be submitted at checkout. The checkout total is always calculated from the
+backend configuration, never from a client-supplied amount.
+
 ## Orders
 
 All order endpoints require Bearer authentication (`401` otherwise).
@@ -422,7 +443,7 @@ receive every order plus customer and payment fields. Order object:
   "id": 10,
   "order_number": "20260915-1A2B3C4D",
   "status": "pending",
-  "total_price": "200000",
+  "total_price": "250000",
   "payment_status": "success",
   "items": [
     {
@@ -449,9 +470,18 @@ receive every order plus customer and payment fields. Order object:
   "custom_design": null,
   "shipping_address": "Tehran, Vanak St. 1",
   "shipping_postal_code": "1234567890",
+  "delivery_method": "express",
+  "delivery_method_name": "Express delivery",
+  "delivery_fee": "50000",
   "created_at": "…"
 }
 ```
+
+- `delivery_method` is the saved method code, `delivery_method_name` its
+  purchase-time name, and `delivery_fee` the charge added once to the order.
+  All three are snapshots: renaming, repricing, or deactivating the method
+  later never changes existing orders. Orders created before delivery methods
+  existed report an empty code/name and a `0` fee.
 
 - `payment_status` is the newest payment's status (`pending`, `success`,
   `failed`) or `null`.
@@ -484,7 +514,8 @@ Cart-sync replacement: `{"items": [...]}` (same item shape as
 item to add it or change its quantity, omit it to remove it. Only
 `pending` orders without a custom design can be edited; `200` returns the
 updated order and `400` reports the reason, in which case the order is
-left unchanged.
+left unchanged. The order's saved `delivery_fee` is kept as-is when the
+total is recalculated.
 
 ### POST /orders/
 
@@ -503,7 +534,8 @@ Requires a complete profile and at least one address. JSON body:
       ]
     }
   ],
-  "address_id": 3
+  "address_id": 3,
+  "delivery_method": "express"
 }
 ```
 
@@ -513,6 +545,7 @@ Requires a complete profile and at least one address. JSON body:
 | `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
 | `items[].selected_options` | Optional list of `{"option_key": "<attribute key from the product detail options>", "choice_key": "<choice key>"}` for `select` attributes, or `{"option_key": "<attribute key>", "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters). Attributes and choices are addressed by their stable keys, never ids |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
+| `delivery_method` | Required; the `code` of an active method from `GET /delivery-methods/`. Unknown or deactivated codes return `400`, and client-supplied amounts are ignored |
 
 Option validation is fully generic (nothing is hardcoded per attribute
 key): every active required attribute of the reference subcategory must be
@@ -525,18 +558,19 @@ rejected. Client-supplied prices are never trusted.
 
 Pricing is backend-only:
 `unit_price = product base price + sum(selected choices' price_delta)`,
-`item total = unit price × quantity`; the order total keeps the existing
-rules (the custom-design surcharge multiplies the item price when
-applied). Deltas are read from the database at creation time. Every
-selected option is saved as an immutable snapshot on the order item (see
-the order object above), and payment initiation charges the calculated
-order total. Prices and the shipping address are snapshotted at purchase
-time. Duplicate lines are not merged and stock is never decremented.
+`item total = unit price × quantity`; the selected delivery method's
+`price_delta` is added once to the order total, and the custom-design
+surcharge multiplies the item price when applied. Deltas are read from the
+database at creation time. Every selected option is saved as an immutable
+snapshot on the order item (see the order object above), and payment
+initiation charges the calculated order total. Prices, the delivery choice,
+and the shipping address are snapshotted at purchase time. Duplicate lines
+are not merged and stock is never decremented.
 
 | Status | Response |
 | --- | --- |
 | `201` | The created order object (staff get the staff shape) |
-| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 'nope' is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
+| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, `{"delivery_method": ["Choose a delivery method."]}`, `{"delivery_method": ["This delivery method is not available."]}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 'nope' is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
 | `404` | Foreign `address_id` |
 
 Custom-design checkout uses `multipart/form-data`:
@@ -554,6 +588,7 @@ Custom-design checkout uses `multipart/form-data`:
 | --- | --- |
 | `items` | JSON string of submitted items |
 | `address_id` | Optional address ID |
+| `delivery_method` | Required; the code of an active delivery method |
 | `custom_design_product_ids` | JSON string array; a subset of the submitted products |
 | `custom_design_description` | Required with a selection; maximum 2000 characters |
 | `images` | 1–3 files; JPEG, PNG, or WEBP by content; maximum 5 MiB and 6000 × 6000 pixels each |
