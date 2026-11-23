@@ -31,6 +31,11 @@ def initiate_payment(order, callback_url):
             raise PaymentError("This order has already been paid.")
         if order.status != Order.STATUS_PENDING:
             raise PaymentError(f"Orders in status '{order.status}' cannot be paid.")
+        if order.payments.filter(status=Payment.STATUS_PENDING).exists():
+            raise PaymentError(
+                "A payment attempt for this order is already pending. "
+                "Please verify it instead of starting another one."
+            )
 
         payment = Payment.objects.create(order=order, amount=order.total_price)
     try:
@@ -85,6 +90,8 @@ def verify_and_complete_payment(track_id, user=None):
         payment, marked_failed = _mark_payment_failed(payment, result["result"])
         if not marked_failed:
             return payment
+        payment.needs_reconciliation = True
+        payment.save(update_fields=["needs_reconciliation", "updated_at"])
         logger.error(
             "Payment %s amount mismatch: gateway=%s rial expected=%s toman (as %s rial)",
             payment.pk, result["amount"], payment.amount, int(payment.amount) * RIAL_PER_TOMAN,
@@ -93,16 +100,42 @@ def verify_and_complete_payment(track_id, user=None):
 
     with transaction.atomic():
         payment = Payment.objects.select_for_update().get(pk=payment.pk)
+        order = Order.objects.select_for_update().get(pk=payment.order_id)
         if payment.status == Payment.STATUS_SUCCESS:
             return payment  # verified concurrently by another request
+        another_payment_paid = (
+            Payment.objects.filter(
+                order_id=order.pk, status=Payment.STATUS_SUCCESS
+            ).exists()
+        )
+        if another_payment_paid or order.status != Order.STATUS_PENDING:
+            # The gateway has confirmed money, but the order has already been
+            # paid or closed. Never mark an additional attempt as success or
+            # send a second order-paid SMS; keep it visible for reconciliation.
+            payment.needs_reconciliation = True
+            payment.paid_at = timezone.now()
+            payment.save(
+                update_fields=[
+                    "needs_reconciliation",
+                    "result_code",
+                    "paid_at",
+                    "updated_at",
+                ]
+            )
+            logger.error(
+                "Payment %s for order %s requires reconciliation: an additional "
+                "successful charge was verified for an already paid or closed order.",
+                payment.pk,
+                order.order_number,
+            )
+            return payment
+
         payment.status = Payment.STATUS_SUCCESS
         payment.paid_at = timezone.now()
         payment.save(update_fields=["status", "result_code", "paid_at", "updated_at"])
 
-        order = payment.order
-        if order.status != Order.STATUS_PAID:
-            order.status = Order.STATUS_PAID
-            order.save(update_fields=["status", "updated_at"])
+        order.status = Order.STATUS_PAID
+        order.save(update_fields=["status", "updated_at"])
 
     _send_payment_success_sms(payment)
     return payment

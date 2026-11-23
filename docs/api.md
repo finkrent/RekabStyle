@@ -500,7 +500,8 @@ receive every order plus customer and payment fields. Order object:
   `null` here; the object appears only on historical orders.
 - Staff responses add `customer_phone_number`, `customer_national_id`,
   `customer_first_name`, `customer_last_name`, and `payments`
-  (`id`, `amount`, `status`, `authority`, `paid_at`, `created_at`).
+  (`id`, `amount`, `status`, `authority`, `paid_at`, `created_at`,
+  `needs_reconciliation`).
 
 ### GET /orders/{id}/
 
@@ -512,10 +513,10 @@ Cart-sync replacement: `{"items": [...]}` (same item shape as
 `POST /orders/`, including optional `subcategory_id` and
 `selected_options`) replaces the order's entire item list — include an
 item to add it or change its quantity, omit it to remove it. Only
-`pending` orders without a custom design can be edited; `200` returns the
-updated order and `400` reports the reason, in which case the order is
-left unchanged. The order's saved `delivery_fee` is kept as-is when the
-total is recalculated.
+`pending` orders without a custom design or a pending payment attempt can be
+edited; `200` returns the updated order and `400` reports the reason, in which
+case the order is left unchanged. The order's saved `delivery_fee` is kept
+as-is when the total is recalculated.
 
 ### POST /orders/
 
@@ -616,12 +617,13 @@ Bearer.
 ```
 
 Creates a pending payment and requests a Zibal session for an owned pending
-order.
+order. A second session cannot be started while an earlier attempt is pending;
+verify the existing attempt first.
 
 | Status | Response |
 | --- | --- |
 | `201` | `{"detail": "Payment initiated. Redirect the customer to payment_url.", "track_id": "123456789", "payment_url": "https://gateway.zibal.ir/start/123456789", "amount": "200000"}` |
-| `400` | `{"detail": "order_id is required."}`, `{"detail": "This order has already been paid."}`, or `{"detail": "Orders in status 'processing' cannot be paid."}` |
+| `400` | `{"detail": "order_id is required."}`, `{"detail": "This order has already been paid."}`, `{"detail": "Orders in status 'processing' cannot be paid."}`, or `{"detail": "A payment attempt for this order is already pending. Please verify it instead of starting another one."}` |
 | `404` | Unknown or foreign order |
 | `502` | `{"detail": "…"}` — Zibal unreachable or rejected the request; the payment attempt is stored as `failed` |
 | `401` | Unauthenticated |

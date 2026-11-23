@@ -22,6 +22,9 @@ from products.models import Product
 CUSTOM_DESIGN_SURCHARGE = Decimal(str(settings.CUSTOM_DESIGN["SURCHARGE_PERCENT"]))
 
 
+from payments.models import Payment
+
+
 class OrderError(Exception):
     """Raised when an order cannot be created or updated. Message is user-facing."""
 
@@ -111,6 +114,17 @@ def create_order(user, items, address, delivery_method, design=None):
     design_product_ids = set(design["product_ids"]) if design else set()
 
     with transaction.atomic():
+        # Serializer validation resolves the method before the transaction;
+        # reload and lock it so deactivation or repricing cannot be missed.
+        try:
+            delivery_method = DeliveryMethod.objects.select_for_update().get(
+                pk=delivery_method.pk
+            )
+        except DeliveryMethod.DoesNotExist as exc:
+            raise OrderError("This delivery method is not available.") from exc
+        if not delivery_method.is_active:
+            raise OrderError("This delivery method is not available.")
+
         order = Order.objects.create(
             user=user,
             shipping_address=address.address,
@@ -200,6 +214,19 @@ def update_order_items(order, items):
         raise OrderError("Orders with a custom design cannot be edited.")
 
     with transaction.atomic():
+        # Payment initiation also locks the order. Recheck state on the locked
+        # instance before replacing anything, so edits and payment are exclusive.
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        if order.status != Order.STATUS_PENDING:
+            raise OrderError("Only pending orders can be edited.")
+        if hasattr(order, "custom_design"):
+            raise OrderError("Orders with a custom design cannot be edited.")
+        if order.payments.filter(status=Payment.STATUS_PENDING).exists():
+            raise OrderError(
+                "This order has a pending payment attempt and cannot be edited. "
+                "Please verify or retry the payment instead."
+            )
+
         order.items.all().delete()
         total = Decimal("0")
         # Same deterministic lock ordering as create_order (deadlock safety).

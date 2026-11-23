@@ -5,14 +5,24 @@ from payments.models import Payment
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("id", "order_number", "amount", "status", "authority", "paid_at", "created_at")
-    list_filter = ("status",)
+    list_display = (
+        "id",
+        "order_number",
+        "amount",
+        "status",
+        "needs_reconciliation",
+        "authority",
+        "paid_at",
+        "created_at",
+    )
+    list_filter = ("status", "needs_reconciliation")
     search_fields = ("authority", "order__order_number", "order__user__phone_number")
     readonly_fields = (
         "order",
         "amount",
         "authority",
         "status",
+        "needs_reconciliation",
         "result_code",
         "paid_at",
         "created_at",

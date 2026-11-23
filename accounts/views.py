@@ -104,8 +104,11 @@ class RequestOtpView(APIView):
         phone_number = serializer.validated_data["phone_number"]
 
         # SMS-abuse guard: the per-phone cooldown and hourly limits are
-        # defeated by rotating phone numbers, so also cap requests per
-        # client IP (best-effort through the Django cache).
+        # defeated by rotating phone numbers, so also cap requests per client
+        # IP. A trusted reverse proxy MUST replace REMOTE_ADDR with the real
+        # client address; forwarding headers are intentionally not trusted.
+        # Deployment without that trusted proxy configuration groups all
+        # customers under the proxy address, not under spoofable client keys.
         ip_key = f"otp-ip:{request.META.get('REMOTE_ADDR', '')}"
         ip_count = cache.get(ip_key, 0)
         if ip_count >= settings.OTP["PER_IP_LIMIT"]:

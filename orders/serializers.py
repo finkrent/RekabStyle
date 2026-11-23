@@ -28,7 +28,15 @@ OPTION_TEXT_MAX_LENGTH = 200
 class PaymentSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
-        fields = ["id", "amount", "status", "authority", "paid_at", "created_at"]
+        fields = [
+            "id",
+            "amount",
+            "status",
+            "authority",
+            "paid_at",
+            "created_at",
+            "needs_reconciliation",
+        ]
 
 
 class DeliveryMethodSerializer(serializers.ModelSerializer):

@@ -14,9 +14,10 @@ from django.urls import reverse
 from accounts.models import Address
 from orders.models import CustomDesign, DeliveryMethod, Order, OrderItemOption
 from orders.serializers import OrderCreateSerializer
-from orders.services.orders import create_order
+from orders.services.orders import create_order, update_order_items
 from payments.services.payments import initiate_payment
 from products.models import AttributeChoice, Category, Product, ProductAttribute, Subcategory
+from payments.models import Payment
 
 User = get_user_model()
 
@@ -783,6 +784,33 @@ class OrderUpdateTests(OrderTestBase):
         order.refresh_from_db()
         self.assertEqual(order.items.count(), 1)
 
+    def test_a_pending_payment_attempt_locks_the_order_items(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+        Payment.objects.create(order=order, amount=order.total_price)
+
+        self.client.force_login(user)
+        response = self._patch(order, [{"product_id": self.product.pk, "quantity": 1}])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("payment", response.data["detail"].lower())
+        order.refresh_from_db()
+        self.assertEqual(order.items.get().quantity, 2)
+        self.assertEqual(order.total_price, 200000)
+
+    def test_a_non_pending_order_cannot_be_edited_in_the_service(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+        original = Order.objects.get(pk=order.pk)
+        original.status = Order.STATUS_PAID
+        original.save(update_fields=["status"])
+
+        with self.assertRaisesMessage(Exception, "Only pending orders can be edited."):
+            update_order_items(original, [{"product": self.product, "quantity": 1}])
+
+        order.refresh_from_db()
+        self.assertEqual(order.items.get().quantity, 2)
+
     def test_invalid_items_json_rejected(self):
         user, address = self._make_complete_user()
         order = self._create_order(user, address, quantity=2)
@@ -1269,4 +1297,40 @@ class DeliveryMethodTests(OrderTestBase):
         self.assertEqual(by_code["express"]["name"], "Express delivery")
         self.assertEqual(by_code["express"]["price_delta"], "50000")
         self.assertEqual(by_code["standard"]["price_delta"], "0")
+
+    def test_checkout_snapshots_the_delivery_method_again_in_its_transaction(self):
+        """The service uses current configuration, not a stale model instance."""
+        method = self._charged_method()
+        stale = DeliveryMethod.objects.get(pk=method.pk)
+        DeliveryMethod.objects.filter(pk=method.pk).update(
+            price_delta=90000, name="Updated express"
+        )
+
+        user, address = self._make_complete_user()
+        order = create_order(
+            user,
+            [{"product": self.product, "quantity": 1}],
+            address,
+            stale,
+        )
+
+        self.assertEqual(order.delivery_fee, 90000)
+        self.assertEqual(order.delivery_method_name, "Updated express")
+        self.assertEqual(order.total_price, 190000)
+
+    def test_checkout_rechecks_delivery_availability_in_its_transaction(self):
+        method = self._charged_method()
+        stale = DeliveryMethod.objects.get(pk=method.pk)
+        DeliveryMethod.objects.filter(pk=method.pk).update(is_active=False)
+        user, address = self._make_complete_user()
+
+        with self.assertRaisesMessage(Exception, "This delivery method is not available."):
+            create_order(
+                user,
+                [{"product": self.product, "quantity": 1}],
+                address,
+                stale,
+            )
+
+        self.assertEqual(Order.objects.count(), 0)
 

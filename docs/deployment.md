@@ -30,8 +30,12 @@ the WSGI server dependency.
    `/media/` from `MEDIA_ROOT`, including `media/designs/` custom-design
    images (kept for historical orders; the custom-design intake is disabled
    by default via `CUSTOM_DESIGN_ENABLED=False`).
-6. Forward `X-Forwarded-Proto`. With debug disabled, Django secures session,
-   CSRF, and refresh cookies.
+6. Forward `X-Forwarded-Proto` and `X-Real-IP` from the trusted reverse proxy
+   to Gunicorn, and configure the proxy to replace the client-supplied value of
+   `X-Real-IP` with the actual remote client address. Gunicorn must expose that
+   value to Django as `REMOTE_ADDR`; Django does not read forwarding headers
+   directly. This keeps OTP throttles per customer rather than per proxy. With
+   debug disabled, Django secures session, CSRF, and refresh cookies.
 7. Before accepting checkout requests, configure at least one active delivery
    method in Django Admin under **Delivery methods**. Set its stable code, name,
    price delta in Toman, and active status; checkout rejects inactive or unknown

@@ -23,6 +23,9 @@ class Payment(models.Model):
     status = models.CharField(
         "Status", max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING
     )
+    # Set only when another successful attempt already paid the same order.
+    # It retains visibility for staff reconciliation/refund workflows.
+    needs_reconciliation = models.BooleanField(default=False)
     result_code = models.IntegerField("Gateway result code", null=True, blank=True)
     paid_at = models.DateTimeField("Paid at", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

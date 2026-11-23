@@ -36,6 +36,7 @@ class PaymentInline(admin.StackedInline):
         "amount",
         "authority",
         "status",
+        "needs_reconciliation",
         "result_code",
         "paid_at",
         "created_at",

@@ -9,6 +9,7 @@ from orders.models import CustomDesign, DeliveryMethod, Order
 from orders.services.orders import create_order
 import payments.services.zibal as zibal_module
 from payments.models import Payment
+from payments.services.payments import verify_and_complete_payment
 from payments.services.zibal import ZibalError
 from products.models import Category, Product
 
@@ -248,7 +249,9 @@ class VerifyPaymentTests(PaymentTestBase):
         self.assertEqual(response.status_code, 400)
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_FAILED)
-        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_FAILED)
+        payment = Payment.objects.get(authority="12345")
+        self.assertEqual(payment.status, Payment.STATUS_FAILED)
+        self.assertTrue(payment.needs_reconciliation)
 
     @patch(VERIFY_TARGET)
     def test_failed_payment_rejected(self, mock_verify):
@@ -348,7 +351,64 @@ class VerifyPaymentTests(PaymentTestBase):
         self.assertEqual(response.data["status"], "failed")
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, Order.STATUS_PENDING)
-        self.assertEqual(Payment.objects.get(authority="12345").status, Payment.STATUS_PENDING)
+
+
+class PaymentRaceRegressionTests(PaymentTestBase):
+    @patch(REQUEST_TARGET)
+    def test_an_active_attempt_prevents_another_payment_session(self, mock_request):
+        self._make_payment()
+
+        self.client.force_login(self.user)
+        response = self.client.post(
+            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 1)
+        mock_request.assert_not_called()
+
+    @patch(REQUEST_TARGET, return_value="67890")
+    def test_a_failed_gateway_request_allows_a_retry(self, mock_request):
+        self._make_payment(track_id="12345").delete()
+        self.client.force_login(self.user)
+
+        with patch(REQUEST_TARGET, side_effect=ZibalError("gateway down")):
+            first = self.client.post(INITIATE_URL, {"order_id": self.order.pk})
+        second = self.client.post(INITIATE_URL, {"order_id": self.order.pk})
+
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.data["track_id"], "67890")
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 2)
+
+    @patch(SMS_ADMIN_TARGET)
+    @patch(SMS_CUSTOMER_TARGET)
+    @patch(VERIFY_TARGET)
+    def test_an_additional_success_is_retained_for_reconciliation(
+        self, mock_verify, customer_sms, admin_sms
+    ):
+        """Do not hide a second charge or report it as a failed payment."""
+        late_payment = self._make_payment(track_id="67890")
+        first_payment = self._make_payment(track_id="12345")
+        first_payment.status = Payment.STATUS_SUCCESS
+        first_payment.save(update_fields=["status"])
+        self.order.status = Order.STATUS_PAID
+        self.order.save(update_fields=["status"])
+        mock_verify.return_value = self._verify_result(
+            amount=int(late_payment.amount) * 10
+        )
+
+        returned = verify_and_complete_payment("67890")
+
+        late_payment.refresh_from_db()
+        self.assertEqual(returned.pk, late_payment.pk)
+        self.assertTrue(late_payment.needs_reconciliation)
+        self.assertNotEqual(late_payment.status, Payment.STATUS_SUCCESS)
+        customer_sms.assert_not_called()
+        admin_sms.assert_not_called()
+        first_payment.refresh_from_db()
+        self.assertEqual(first_payment.status, Payment.STATUS_SUCCESS)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PAID)
 
 
 class ZibalServiceTests(TestCase):

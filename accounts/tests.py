@@ -99,9 +99,33 @@ class RequestOtpTests(TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.data["code"], "rate_limited")
 
+    @override_settings(OTP={**settings.OTP, "PER_IP_LIMIT": 2})
+    @patch(SMS_TARGET)
+    def test_forwarded_headers_cannot_change_the_otp_rate_limit_identity(self, mock_send):
+        """The proxy supplies REMOTE_ADDR; clients cannot choose their own key."""
+        cache.set("otp-ip:10.0.0.7", 2, 60 * 60)
+
+        response = self.client.post(
+            REQUEST_OTP_URL,
+            {"phone_number": PHONE},
+            REMOTE_ADDR="10.0.0.7",
+            HTTP_X_FORWARDED_FOR="203.0.113.99",
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(cache.get("otp-ip:203.0.113.99"), None)
+
     @override_settings(OTP={**settings.OTP, "PER_IP_LIMIT": 1})
     @patch(SMS_TARGET)
-    def test_per_ip_limit_is_per_ip(self, mock_send):
+    def test_otp_requests_are_grouped_by_proxy_supplied_client_address(self, mock_send):
+        self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE}, REMOTE_ADDR="10.0.0.7")
+        response = self.client.post(
+            REQUEST_OTP_URL,
+            {"phone_number": "09120000001"},
+            REMOTE_ADDR="10.0.0.7",
+        )
+        self.assertEqual(response.status_code, 429)
+
         """A throttled IP does not affect other clients."""
         self.client.post(REQUEST_OTP_URL, {"phone_number": PHONE})
         response = self.client.post(
