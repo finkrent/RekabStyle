@@ -148,6 +148,14 @@ Send one to three JPEG, PNG, or WEBP files, each at most 5 MiB. Selected items
 receive the configured surcharge, 30 percent by default. The server is the
 source of truth for prices and validation.
 
+## Orders
+
+`GET /orders/` returns paginated summaries with `id`, `order_number`, `status`,
+`total_price`, `delivery_method_name`, and `created_at`. Fetch
+`GET /orders/{id}/` for items, options, shipping, delivery, payment, and custom
+design details. Superuser list responses additionally include
+`customer_full_name`.
+
 ## Payments
 
 1. After the customer chooses a delivery method, initiate payment with

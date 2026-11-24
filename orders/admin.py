@@ -104,11 +104,10 @@ class CustomDesignAdmin(admin.ModelAdmin):
 
 @admin.register(OrderItemOption)
 class OrderItemOptionAdmin(admin.ModelAdmin):
-    """Read-only audit view of the immutable per-item option snapshots.
+    """Read-only audit view of immutable option snapshots for ordinary staff.
 
-    Purchase-time keys, labels, text values, and deltas must never be
-    edited or deleted (historical orders depend on them), so all write
-    paths are disabled.
+    Purchase-time keys, labels, text values, and deltas must not be edited.
+    Superusers may delete them directly or through order deletion.
     """
 
     list_display = ("item", "attribute_key", "choice_key", "text_value", "price_delta")
@@ -124,4 +123,4 @@ class OrderItemOptionAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        return request.user.is_superuser

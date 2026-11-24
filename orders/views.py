@@ -10,8 +10,10 @@ from orders.serializers import (
     AdminOrderSerializer,
     DeliveryMethodSerializer,
     OrderCreateSerializer,
+    OrderListSerializer,
     OrderSerializer,
     OrderUpdateSerializer,
+    SuperuserOrderListSerializer,
 )
 from orders.services.design_uploads import ImageValidationError, validate_and_reencode
 from orders.services.orders import OrderError, create_order, update_order_items
@@ -61,6 +63,14 @@ class OrderListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        if self.request.method == "GET":
+            queryset = Order.objects.all()
+            if self.request.user.is_superuser:
+                return queryset.select_related("user")
+            if self.request.user.is_staff:
+                return queryset
+            return queryset.filter(user=self.request.user)
+
         queryset = Order.objects.prefetch_related(
             "items", "items__options", "payments", "custom_design"
         )
@@ -71,6 +81,10 @@ class OrderListCreateView(generics.ListCreateAPIView):
     def get_serializer_class(self):
         if self.request.method == "POST":
             return OrderCreateSerializer
+        if self.request.method == "GET":
+            if self.request.user.is_superuser:
+                return SuperuserOrderListSerializer
+            return OrderListSerializer
         return AdminOrderSerializer if self.request.user.is_staff else OrderSerializer
 
     def create(self, request, *args, **kwargs):

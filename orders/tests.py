@@ -180,6 +180,32 @@ class OrderCreateTests(OrderTestBase):
 
 
 class OrderVisibilityTests(OrderTestBase):
+    def test_user_list_returns_only_summary_fields(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address)
+        order.delivery_method_name = "Standard delivery"
+        order.save(update_fields=["delivery_method_name"])
+
+        self.client.force_login(user)
+        response = self.client.get(ORDER_LIST_URL)
+
+        self.assertEqual(response.status_code, 200)
+        summary = response.data["results"][0]
+        self.assertEqual(
+            set(summary),
+            {
+                "id",
+                "order_number",
+                "status",
+                "total_price",
+                "delivery_method_name",
+                "created_at",
+            },
+        )
+        self.assertEqual(summary["delivery_method_name"], "Standard delivery")
+        detail = self.client.get(reverse("order-detail", args=[order.pk]))
+        self.assertIn("items", detail.data)
+
     def test_user_sees_only_own_orders(self):
         user, address = self._make_complete_user()
         other, other_address = self._make_complete_user("09120000001", VALID_NATIONAL_ID_2)
@@ -212,6 +238,34 @@ class OrderVisibilityTests(OrderTestBase):
         self.client.force_login(admin)
         response = self.client.get(ORDER_LIST_URL)
         self.assertEqual(response.data["count"], 2)
+
+    def test_superuser_list_includes_customer_full_name(self):
+        user, address = self._make_complete_user()
+        self._create_order(user, address)
+        admin = User.objects.create_superuser(
+            phone_number="09111111111", password="admin-pass-123"
+        )
+
+        self.client.force_login(admin)
+        response = self.client.get(ORDER_LIST_URL)
+
+        summary = response.data["results"][0]
+        self.assertEqual(summary["customer_full_name"], "Ali Rezaei")
+        self.assertNotIn("items", summary)
+        self.assertNotIn("customer_phone_number", summary)
+
+    def test_non_superuser_staff_list_omits_customer_full_name(self):
+        user, address = self._make_complete_user()
+        self._create_order(user, address)
+        staff = User.objects.create_user(
+            phone_number="09111111111", is_staff=True
+        )
+
+        self.client.force_login(staff)
+        response = self.client.get(ORDER_LIST_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("customer_full_name", response.data["results"][0])
 
     def test_admin_detail_includes_customer_and_shipping_information(self):
         user, address = self._make_complete_user()

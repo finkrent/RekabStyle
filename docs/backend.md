@@ -45,7 +45,8 @@ Orders snapshot product prices and shipping addresses at creation; the total
 at that point is the item subtotal. Delivery is selected when payment is
 initiated, and its method and fee are snapshotted then. Checkout locks product
 rows and validates prices server-side. It does not merge duplicate lines or
-decrement stock.
+decrement stock. The order list API returns compact order summaries, while the
+order detail API returns the complete item, option, delivery, and payment data.
 Custom designs are one-to-one with orders, link selected items, and store
 re-encoded Pillow images under `designs/YYYY/MM/`.
 The custom-design *intake* is feature-flagged: with

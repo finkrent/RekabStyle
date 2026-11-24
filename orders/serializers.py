@@ -105,6 +105,34 @@ class CustomDesignSerializer(serializers.ModelSerializer):
         ]
 
 
+class OrderListSerializer(serializers.ModelSerializer):
+    """Compact customer-facing representation used only by the order list."""
+
+    class Meta:
+        model = Order
+        fields = [
+            "id",
+            "order_number",
+            "status",
+            "total_price",
+            "delivery_method_name",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class SuperuserOrderListSerializer(OrderListSerializer):
+    """Order summary with customer identity for superusers only."""
+
+    customer_full_name = serializers.CharField(
+        source="user.get_full_name", read_only=True
+    )
+
+    class Meta(OrderListSerializer.Meta):
+        fields = [*OrderListSerializer.Meta.fields, "customer_full_name"]
+        read_only_fields = fields
+
+
 class OrderSerializer(serializers.ModelSerializer):
     """Customer-facing representation: no sensitive customer data."""
 

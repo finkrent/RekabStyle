@@ -436,7 +436,27 @@ All order endpoints require Bearer authentication (`401` otherwise).
 ### GET /orders/
 
 Paginated, newest first. Customers receive their own orders; staff users
-receive every order plus customer and payment fields. Order object:
+receive every order. Each result is a compact summary containing only these
+fields (no items, options, payments, shipping details, or custom design):
+
+```json
+{
+  "id": 10,
+  "order_number": "20260915-1A2B3C4D",
+  "status": "pending",
+  "total_price": "250000",
+  "delivery_method_name": "Express delivery",
+  "created_at": "…"
+}
+```
+
+Superuser results additionally include `"customer_full_name": "Ali Rezaei"`.
+Non-superuser staff receive the same summary without customer identity fields.
+
+### GET /orders/{id}/
+
+`200` with one order (owner or staff); `404` for another user's order. Unlike
+the list, the detail response contains the full order object:
 
 ```json
 {
@@ -498,14 +518,10 @@ receive every order plus customer and payment fields. Order object:
   `completed`; only `pending` is set today. While the custom-design intake is
   disabled (`CUSTOM_DESIGN_ENABLED=False`), newly placed orders always return
   `null` here; the object appears only on historical orders.
-- Staff responses add `customer_phone_number`, `customer_national_id`,
+- Staff detail responses add `customer_phone_number`, `customer_national_id`,
   `customer_first_name`, `customer_last_name`, and `payments`
   (`id`, `amount`, `status`, `authority`, `paid_at`, `created_at`,
   `needs_reconciliation`).
-
-### GET /orders/{id}/
-
-`200` with one order (owner or staff); `404` for another user's order.
 
 ### PATCH /orders/{id}/
 
