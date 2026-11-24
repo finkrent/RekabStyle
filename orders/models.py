@@ -109,7 +109,7 @@ class Order(models.Model):
 
     @staticmethod
     def generate_order_number():
-        return f"{timezone.now():%Y%m%d}-{secrets.token_hex(4).upper()}"
+        return f"{timezone.now():%Y-%m-%d}-{secrets.token_hex(4).upper()}"
 
 
 class OrderItem(models.Model):
