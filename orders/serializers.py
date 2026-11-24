@@ -409,10 +409,8 @@ class OrderCreateSerializer(serializers.Serializer):
     declared as JSONFields and decoded in their validators so both bodies
     work identically.
 
-    `delivery_method` is the stable code of an active delivery method (see
-    GET /api/v1/delivery-methods/). The backend adds its configured price
-    delta once per order and snapshots the choice; client-supplied amounts
-    are never accepted.
+    Delivery is selected later at payment initiation, so this input contains
+    only items and the shipping address.
 
     Custom design (the "Custom Design" checkbox on the order page):
     `custom_design_product_ids` selects which of the submitted items get the
@@ -428,16 +426,6 @@ class OrderCreateSerializer(serializers.Serializer):
     items = serializers.JSONField()
     # Optional: defaults to the user's most recently added address.
     address_id = serializers.IntegerField(required=False, allow_null=True)
-    # Stable code from GET /api/v1/delivery-methods/; never a client price.
-    # The queryset filters inactive methods out, so a retired code is a 400.
-    delivery_method = serializers.SlugRelatedField(
-        slug_field="code",
-        queryset=DeliveryMethod.objects.filter(is_active=True),
-        error_messages={
-            "does_not_exist": "This delivery method is not available.",
-            "required": "Choose a delivery method.",
-        },
-    )
 
     # --- Custom design (checkbox on the checkout page) ---
     custom_design_product_ids = serializers.JSONField(required=False, allow_null=True)

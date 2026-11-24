@@ -50,8 +50,14 @@ class PaymentTestBase(TestCase):
             self.user,
             items=[{"product": self.product, "quantity": 2}],
             address=self.address,
-            delivery_method=self.delivery_method,
         )
+
+    def _initiate_payload(self, **extra):
+        return {
+            "order_id": self.order.pk,
+            "delivery_method": self.delivery_method.code,
+            **extra,
+        }
 
     def _make_payment(self, track_id="12345"):
         return Payment.objects.create(
@@ -77,7 +83,7 @@ class InitiatePaymentTests(PaymentTestBase):
         mock_request.return_value = "12345"
         self.client.force_login(self.user)
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["track_id"], "12345")
@@ -90,7 +96,7 @@ class InitiatePaymentTests(PaymentTestBase):
 
     def test_initiate_payment_requires_authentication(self):
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 401)
 
@@ -99,7 +105,7 @@ class InitiatePaymentTests(PaymentTestBase):
         self.order.save()
         self.client.force_login(self.user)
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 400)
 
@@ -115,7 +121,7 @@ class InitiatePaymentTests(PaymentTestBase):
         other = User.objects.get(phone_number="09120000001")
         self.client.force_login(other)
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 404)
 
@@ -123,7 +129,7 @@ class InitiatePaymentTests(PaymentTestBase):
     def test_gateway_failure_marks_payment_failed(self, mock_request):
         self.client.force_login(self.user)
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 502)
         payment = Payment.objects.get(order=self.order)
@@ -360,7 +366,7 @@ class PaymentRaceRegressionTests(PaymentTestBase):
 
         self.client.force_login(self.user)
         response = self.client.post(
-            INITIATE_URL, {"order_id": self.order.pk}, content_type="application/json"
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
 
         self.assertEqual(response.status_code, 400)
@@ -373,8 +379,8 @@ class PaymentRaceRegressionTests(PaymentTestBase):
         self.client.force_login(self.user)
 
         with patch(REQUEST_TARGET, side_effect=ZibalError("gateway down")):
-            first = self.client.post(INITIATE_URL, {"order_id": self.order.pk})
-        second = self.client.post(INITIATE_URL, {"order_id": self.order.pk})
+            first = self.client.post(INITIATE_URL, self._initiate_payload())
+        second = self.client.post(INITIATE_URL, self._initiate_payload())
 
         self.assertEqual(second.status_code, 201)
         self.assertEqual(second.data["track_id"], "67890")
@@ -441,7 +447,13 @@ class ZibalServiceTests(TestCase):
         mock_response.json.return_value = {"result": 102, "message": "merchanty Nope"}
         mock_post.return_value = mock_response
         with self.assertRaises(zibal_module.ZibalError):
-            zibal_module.request_payment(16000, "http://callback", "ORD-1")
+            zibal_module.request_payment(
+                16000,
+                "http://callback",
+                "ORD-1",
+                mobile="09123456789",
+                national_code="0012345679",
+            )
 
     @patch("requests.post")
     def test_verify_sends_integer_track_id_and_marks_paid(self, mock_post):

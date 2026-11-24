@@ -86,7 +86,7 @@ def _post(path, payload):
         raise ZibalError("Invalid response from payment gateway.") from exc
 
 
-def request_payment(amount, callback_url, order_number, mobile="", national_code=""):
+def request_payment(amount, callback_url, order_number, mobile, national_code):
     """Create a payment session and return the Zibal trackId.
 
     `amount` is in Toman; it is converted to Rial before being sent, per the
@@ -98,13 +98,9 @@ def request_payment(amount, callback_url, order_number, mobile="", national_code
         "callbackUrl": callback_url,
         "description": f"Order {order_number}",
         "orderId": order_number,
+        "mobile": mobile,
+        "nationalCode": national_code,
     }
-    if mobile:
-        payload["mobile"] = mobile
-    if national_code:
-        # Optional; Zibal rejects the transaction if the card owner's national
-        # ID does not match this value.
-        payload["nationalCode"] = national_code
 
     data = _post(REQUEST_PATH, payload)
     if data.get("result") != 100 or not data.get("trackId"):

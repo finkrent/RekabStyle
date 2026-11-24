@@ -66,7 +66,6 @@ class OrderTestBase(TestCase):
             user,
             items=[{"product": self.product, "quantity": quantity}],
             address=address,
-            delivery_method=self.delivery_method,
         )
 
 
@@ -79,7 +78,6 @@ class OrderCreateTests(OrderTestBase):
             {
                 "items": [{"product_id": self.product.pk, "quantity": 2}],
                 "address_id": address.pk,
-                "delivery_method": self.delivery_method.code,
             },
             content_type="application/json",
         )
@@ -98,10 +96,7 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
@@ -118,10 +113,7 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -138,7 +130,6 @@ class OrderCreateTests(OrderTestBase):
             {
                 "items": [{"product_id": self.product.pk, "quantity": 1}],
                 "address_id": other_address.pk,
-                "delivery_method": self.delivery_method.code,
             },
             content_type="application/json",
         )
@@ -160,10 +151,7 @@ class OrderCreateTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -173,10 +161,7 @@ class OrderCreateTests(OrderTestBase):
     def test_anonymous_cannot_create_order(self):
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 401)
@@ -188,10 +173,7 @@ class OrderCreateTests(OrderTestBase):
         self.product.save()
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 400)
@@ -301,7 +283,6 @@ class CheckoutCustomDesignTests(OrderTestBase):
                     for product, quantity in zip(products, quantities)
                 ]
             ),
-            "delivery_method": self.delivery_method.code,
         }
         if custom_product_ids is not None:
             data["custom_design_product_ids"] = json.dumps(custom_product_ids)
@@ -366,10 +347,7 @@ class CheckoutCustomDesignTests(OrderTestBase):
         self.client.force_login(user)
         response = self.client.post(
             ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": 1}],
-                "delivery_method": self.delivery_method.code,
-            },
+            {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
@@ -587,7 +565,6 @@ class CheckoutCustomDesignTests(OrderTestBase):
             ORDER_LIST_URL,
             {
                 "items": "not-json",
-                "delivery_method": self.delivery_method.code,
                 "custom_design_product_ids": json.dumps([1]),
                 "custom_design_description": "ok",
                 "images": [_image_file()],
@@ -654,7 +631,6 @@ class CustomDesignDisabledTests(OrderTestBase):
                 "custom_design_description": "Print my logo, matte finish",
                 "images": [_image_file()],
                 "address_id": address.pk,
-                "delivery_method": self.delivery_method.code,
             },
         )
         self.assertEqual(response.status_code, 201)
@@ -870,9 +846,7 @@ class OrderOptionsTests(OrderTestBase):
 
     def _checkout(self, items):
         return self.client.post(
-            ORDER_LIST_URL,
-            {"items": items, "delivery_method": self.delivery_method.code},
-            content_type="application/json",
+            ORDER_LIST_URL, {"items": items}, content_type="application/json"
         )
 
     def _valid_options(self):
@@ -1168,30 +1142,31 @@ class OrderOptionsTests(OrderTestBase):
         with mock.patch(
             "payments.services.payments.request_payment", return_value="TRACK123"
         ) as mocked:
-            payment = initiate_payment(order, "http://testserver/api/v1/payments/callback/")
+            payment = initiate_payment(
+                order,
+                "http://testserver/api/v1/payments/callback/",
+                self.delivery_method,
+            )
         self.assertEqual(payment.amount, order.total_price)
         self.assertEqual(mocked.call_args.kwargs["amount"], order.total_price)
 
 
 class DeliveryMethodTests(OrderTestBase):
-    """The delivery choice is made at checkout and priced by the backend."""
+    """Delivery is selected when payment is initiated, not at order creation."""
 
     def _charged_method(self, price_delta=50000):
         return DeliveryMethod.objects.create(
             code="express", name="Express delivery", price_delta=price_delta
         )
 
-    def _checkout(self, method, quantity=1):
+    def _initiate(self, order, method):
         return self.client.post(
-            ORDER_LIST_URL,
-            {
-                "items": [{"product_id": self.product.pk, "quantity": quantity}],
-                "delivery_method": method.code,
-            },
+            reverse("payment-initiate"),
+            {"order_id": order.pk, "delivery_method": method.code},
             content_type="application/json",
         )
 
-    def test_checkout_requires_delivery_method(self):
+    def test_checkout_creates_an_order_without_a_delivery_method(self):
         user, address = self._make_complete_user()
         self.client.force_login(user)
         response = self.client.post(
@@ -1199,91 +1174,112 @@ class DeliveryMethodTests(OrderTestBase):
             {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["total_price"], "100000")
+        self.assertEqual(response.data["delivery_fee"], "0")
+        self.assertEqual(response.data["delivery_method"], "")
+        self.assertIsNone(Order.objects.get().delivery_method)
+
+    def test_payment_requires_delivery_method(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address)
+        self.client.force_login(user)
+        response = self.client.post(
+            reverse("payment-initiate"),
+            {"order_id": order.pk},
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 400)
         self.assertIn("delivery_method", response.data)
-        self.assertEqual(Order.objects.count(), 0)
+        self.assertFalse(Payment.objects.exists())
 
-    def test_unknown_and_inactive_delivery_methods_are_rejected(self):
+    def test_unknown_and_inactive_methods_are_rejected_at_payment(self):
         inactive = DeliveryMethod.objects.create(
             code="pickup", name="Pickup", price_delta=0, is_active=False
         )
         user, address = self._make_complete_user()
+        order = self._create_order(user, address)
         self.client.force_login(user)
         for code in ("does-not-exist", inactive.code):
             response = self.client.post(
-                ORDER_LIST_URL,
-                {
-                    "items": [{"product_id": self.product.pk, "quantity": 1}],
-                    "delivery_method": code,
-                },
+                reverse("payment-initiate"),
+                {"order_id": order.pk, "delivery_method": code},
                 content_type="application/json",
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("delivery_method", response.data)
-        self.assertEqual(Order.objects.count(), 0)
+        self.assertFalse(Payment.objects.exists())
 
-    def test_delivery_fee_is_added_and_snapshotted(self):
+    def test_delivery_fee_is_added_when_payment_is_initiated(self):
         method = self._charged_method()
         user, address = self._make_complete_user()
+        order = self._create_order(user, address)
         self.client.force_login(user)
-        response = self._checkout(method, quantity=2)
+        with mock.patch("payments.services.payments.request_payment", return_value="12345"):
+            response = self._initiate(order, method)
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["delivery_method"], "express")
-        self.assertEqual(response.data["delivery_method_name"], "Express delivery")
-        self.assertEqual(response.data["delivery_fee"], "50000")
-        self.assertEqual(response.data["total_price"], "250000")
-        order = Order.objects.get(pk=response.data["id"])
+        self.assertEqual(int(response.data["amount"]), 250000)
+        order.refresh_from_db()
         self.assertEqual(order.delivery_method, method)
-        self.assertEqual(order.delivery_method_code, "express")
         self.assertEqual(order.delivery_method_name, "Express delivery")
         self.assertEqual(order.delivery_fee, 50000)
         self.assertEqual(order.total_price, 250000)
 
-    def test_delivery_snapshot_survives_method_changes(self):
+    def test_payment_snapshots_current_delivery_configuration(self):
         method = self._charged_method()
         user, address = self._make_complete_user()
-        self.client.force_login(user)
-        order_id = self._checkout(method).data["id"]
+        order = self._create_order(user, address)
+        stale = DeliveryMethod.objects.get(pk=method.pk)
+        DeliveryMethod.objects.filter(pk=method.pk).update(
+            price_delta=90000, name="Updated express"
+        )
+        with mock.patch("payments.services.payments.request_payment", return_value="12345"):
+            payment = initiate_payment(order, "http://testserver/callback/", stale)
+        self.assertEqual(payment.amount, 290000)
+        self.assertEqual(payment.order.delivery_method_name, "Updated express")
 
-        method.name = "Express (renamed)"
-        method.price_delta = 90000
-        method.is_active = False
-        method.save()
+    def test_inactive_method_is_rejected_inside_payment_transaction(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address)
+        stale = DeliveryMethod.objects.get(pk=method.pk)
+        DeliveryMethod.objects.filter(pk=method.pk).update(is_active=False)
+        with self.assertRaisesMessage(Exception, "This delivery method is not available."):
+            initiate_payment(order, "http://testserver/callback/", stale)
+        self.assertFalse(Payment.objects.exists())
 
-        detail = self.client.get(reverse("order-detail", args=[order_id]))
-        self.assertEqual(detail.status_code, 200)
-        self.assertEqual(detail.data["delivery_method_name"], "Express delivery")
-        self.assertEqual(detail.data["delivery_fee"], "50000")
-        self.assertEqual(detail.data["total_price"], "150000")
+    def test_retry_does_not_charge_delivery_twice(self):
+        method = self._charged_method()
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address)
+        with mock.patch("payments.services.payments.request_payment", side_effect=Exception("down")):
+            with self.assertRaises(Exception):
+                initiate_payment(order, "http://testserver/callback/", method)
+        self.assertEqual(Order.objects.get(pk=order.pk).total_price, 250000)
+        with mock.patch("payments.services.payments.request_payment", return_value="67890"):
+            payment = initiate_payment(order, "http://testserver/callback/", method)
+        self.assertEqual(payment.amount, 250000)
+        self.assertEqual(Order.objects.get(pk=order.pk).total_price, 250000)
 
     def test_item_edit_keeps_the_saved_delivery_fee(self):
         method = self._charged_method()
         user, address = self._make_complete_user()
+        order = self._create_order(user, address)
+        order.delivery_method = method
+        order.delivery_method_code = method.code
+        order.delivery_method_name = method.name
+        order.delivery_fee = method.price_delta
+        order.total_price += order.delivery_fee
+        order.save()
         self.client.force_login(user)
-        order_id = self._checkout(method, quantity=2).data["id"]
-
-        method.price_delta = 90000
-        method.save()
         response = self.client.patch(
-            reverse("order-detail", args=[order_id]),
+            reverse("order-detail", args=[order.pk]),
             {"items": [{"product_id": self.product.pk, "quantity": 1}]},
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["delivery_fee"], "50000")
         self.assertEqual(response.data["total_price"], "150000")
-
-    def test_payment_initiate_uses_total_including_delivery(self):
-        method = self._charged_method()
-        user, address = self._make_complete_user()
-        self.client.force_login(user)
-        order = Order.objects.get(pk=self._checkout(method).data["id"])
-        with mock.patch(
-            "payments.services.payments.request_payment", return_value="TRACK123"
-        ) as mocked:
-            payment = initiate_payment(order, "http://testserver/api/v1/payments/callback/")
-        self.assertEqual(payment.amount, 150000)
-        self.assertEqual(mocked.call_args.kwargs["amount"], 150000)
 
     def test_active_methods_are_listed_publicly(self):
         self._charged_method()
@@ -1297,40 +1293,4 @@ class DeliveryMethodTests(OrderTestBase):
         self.assertEqual(by_code["express"]["name"], "Express delivery")
         self.assertEqual(by_code["express"]["price_delta"], "50000")
         self.assertEqual(by_code["standard"]["price_delta"], "0")
-
-    def test_checkout_snapshots_the_delivery_method_again_in_its_transaction(self):
-        """The service uses current configuration, not a stale model instance."""
-        method = self._charged_method()
-        stale = DeliveryMethod.objects.get(pk=method.pk)
-        DeliveryMethod.objects.filter(pk=method.pk).update(
-            price_delta=90000, name="Updated express"
-        )
-
-        user, address = self._make_complete_user()
-        order = create_order(
-            user,
-            [{"product": self.product, "quantity": 1}],
-            address,
-            stale,
-        )
-
-        self.assertEqual(order.delivery_fee, 90000)
-        self.assertEqual(order.delivery_method_name, "Updated express")
-        self.assertEqual(order.total_price, 190000)
-
-    def test_checkout_rechecks_delivery_availability_in_its_transaction(self):
-        method = self._charged_method()
-        stale = DeliveryMethod.objects.get(pk=method.pk)
-        DeliveryMethod.objects.filter(pk=method.pk).update(is_active=False)
-        user, address = self._make_complete_user()
-
-        with self.assertRaisesMessage(Exception, "This delivery method is not available."):
-            create_order(
-                user,
-                [{"product": self.product, "quantity": 1}],
-                address,
-                stale,
-            )
-
-        self.assertEqual(Order.objects.count(), 0)
 

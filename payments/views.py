@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.views import APIView
 
-from orders.models import Order
+from orders.models import DeliveryMethod, Order
 from payments.models import Payment
 from payments.services.payments import PaymentError, initiate_payment, verify_and_complete_payment
 from payments.services.zibal import ZibalError, payment_url
@@ -20,6 +20,14 @@ class InitiatePaymentRequest(serializers.Serializer):
     """Body of POST /api/v1/payments/initiate/."""
 
     order_id = serializers.IntegerField(help_text="PK of the user's pending order.")
+    delivery_method = serializers.SlugRelatedField(
+        slug_field="code",
+        queryset=DeliveryMethod.objects.filter(is_active=True),
+        error_messages={
+            "does_not_exist": "This delivery method is not available.",
+            "required": "Choose a delivery method.",
+        },
+    )
 
 
 class VerifyPaymentRequest(serializers.Serializer):
@@ -51,18 +59,19 @@ class InitiatePaymentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        order_id = request.data.get("order_id")
-        if not order_id:
-            return Response(
-                {"detail": "order_id is required."}, status=status.HTTP_400_BAD_REQUEST
-            )
-        order = get_object_or_404(Order, pk=order_id, user=request.user)
+        serializer = InitiatePaymentRequest(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = get_object_or_404(
+            Order, pk=serializer.validated_data["order_id"], user=request.user
+        )
 
         callback_url = settings.ZIBAL["CALLBACK_URL"] or request.build_absolute_uri(
             reverse("payment-callback")
         )
         try:
-            payment = initiate_payment(order, callback_url)
+            payment = initiate_payment(
+                order, callback_url, serializer.validated_data["delivery_method"]
+            )
         except PaymentError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except ZibalError as exc:

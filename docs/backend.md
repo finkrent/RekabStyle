@@ -41,10 +41,11 @@ evidence. The profile API reports the latest acceptance; acceptance rows are
 never written or edited through the API. Profile completion requires the
 national ID, both names, and at least one address.
 
-Orders snapshot product prices, the selected delivery method, its fee, and
-shipping addresses. Checkout locks product rows and validates prices
-server-side; the delivery fee is added once per order and remains fixed if a
-method is later repriced. It does not merge duplicate lines or decrement stock.
+Orders snapshot product prices and shipping addresses at creation; the total
+at that point is the item subtotal. Delivery is selected when payment is
+initiated, and its method and fee are snapshotted then. Checkout locks product
+rows and validates prices server-side. It does not merge duplicate lines or
+decrement stock.
 Custom designs are one-to-one with orders, link selected items, and store
 re-encoded Pillow images under `designs/YYYY/MM/`.
 The custom-design *intake* is feature-flagged: with
@@ -84,10 +85,10 @@ preselected option.
 
 ## Payment and notification flow
 
-Initiation locks the order, rejects a second pending attempt, creates a pending
-payment, and requests a Zibal track ID. Pending-payment orders cannot have
-their items edited. Verification checks the gateway amount in Rial against the
-stored Toman amount multiplied by 10. Row locks make completion idempotent;
+Initiation locks the order, requires an active delivery method, snapshots its
+current fee, adds it once to the item subtotal, and rejects a second pending
+attempt. Pending-payment orders cannot have their items edited. Verification
+checks the gateway amount in Rial against the stored Toman amount multiplied by 10. Row locks make completion idempotent;
 successful payment and order status are committed together before notifications
 are attempted. If another attempt has already paid the order, an additional
 successful charge is marked `needs_reconciliation` rather than recorded as a

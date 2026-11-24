@@ -83,7 +83,6 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 request.user,
                 serializer.validated_data["items"],
                 address,
-                serializer.validated_data["delivery_method"],
                 design=design,
             )
         except ImageValidationError as exc:

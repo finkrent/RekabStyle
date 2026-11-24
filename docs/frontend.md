@@ -87,10 +87,10 @@ rejects checkout for inactive products even if a client submits one.
 
 ### Checkout (normal, JSON)
 
-Load `GET /delivery-methods/` when the checkout page opens and render the
-`name` and `price_delta` of each active method. The customer must choose one;
-send its `code` as `delivery_method`. Show the fee and the updated total, but
-treat them as estimates — the backend recalculates on submit.
+Load `GET /delivery-methods/` on the finalization screen so the customer can
+choose how the order will be delivered. Order creation itself only submits
+items, options, and the address; the returned `total_price` is the item
+subtotal. Delivery is submitted with the payment request in the next step.
 
 ```js
 const order = await api("/orders/", {
@@ -108,20 +108,15 @@ const order = await api("/orders/", {
       },
     ],
     address_id: 3,
-    delivery_method: "express",
   }),
 });
-// order.delivery_method       -> "express"
-// order.delivery_method_name  -> "Express delivery"
-// order.delivery_fee          -> "50000"
-// order.total_price           -> items + delivery fee
+// order.total_price -> item subtotal, before delivery
 ```
 
 `option_key`/`choice_key` are the stable string keys from the product detail
 `options`; ids are not part of the API. `subcategory_id` and
 `selected_options` are optional; required attributes (per the product detail
-response) must all be submitted. `delivery_method` is required: omitting it or
-sending an unknown/deactivated code returns `400` and creates no order.
+response) must all be submitted. Do not submit delivery with this request.
 
 ### Cart updates
 
@@ -143,7 +138,6 @@ Custom design requires `FormData`. Do not set `Content-Type` manually:
 const form = new FormData();
 form.append("items", JSON.stringify([{ product_id: 1, quantity: 2 }]));
 form.append("address_id", "3");
-form.append("delivery_method", "express");
 form.append("custom_design_product_ids", JSON.stringify([1]));
 form.append("custom_design_description", "Print my logo on the front");
 form.append("images", file);
@@ -156,7 +150,10 @@ source of truth for prices and validation.
 
 ## Payments
 
-1. Initiate with `POST /payments/initiate/` and `{ "order_id": order.id }`.
+1. After the customer chooses a delivery method, initiate payment with
+   `POST /payments/initiate/` and
+   `{ "order_id": order.id, "delivery_method": "express" }`.
+   The response `amount` is the final total including delivery.
 2. Preserve `track_id` and redirect the full page to `payment_url`.
 3. Let Zibal redirect to the backend callback.
 4. Preserve the original track ID; the callback does not replace it.

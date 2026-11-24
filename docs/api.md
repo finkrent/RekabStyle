@@ -535,10 +535,13 @@ Requires a complete profile and at least one address. JSON body:
       ]
     }
   ],
-  "address_id": 3,
-  "delivery_method": "express"
+  "address_id": 3
 }
 ```
+
+Order creation does not require a delivery method. At this stage `total_price`
+is the item subtotal and `delivery_fee` is `0`; delivery is selected when
+payment is initiated.
 
 | Field | Rules |
 | --- | --- |
@@ -546,7 +549,6 @@ Requires a complete profile and at least one address. JSON body:
 | `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
 | `items[].selected_options` | Optional list of `{"option_key": "<attribute key from the product detail options>", "choice_key": "<choice key>"}` for `select` attributes, or `{"option_key": "<attribute key>", "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters). Attributes and choices are addressed by their stable keys, never ids |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
-| `delivery_method` | Required; the `code` of an active method from `GET /delivery-methods/`. Unknown or deactivated codes return `400`, and client-supplied amounts are ignored |
 
 Option validation is fully generic (nothing is hardcoded per attribute
 key): every active required attribute of the reference subcategory must be
@@ -559,19 +561,19 @@ rejected. Client-supplied prices are never trusted.
 
 Pricing is backend-only:
 `unit_price = product base price + sum(selected choices' price_delta)`,
-`item total = unit price × quantity`; the selected delivery method's
-`price_delta` is added once to the order total, and the custom-design
-surcharge multiplies the item price when applied. Deltas are read from the
-database at creation time. Every selected option is saved as an immutable
-snapshot on the order item (see the order object above), and payment
-initiation charges the calculated order total. Prices, the delivery choice,
-and the shipping address are snapshotted at purchase time. Duplicate lines
-are not merged and stock is never decremented.
+`item total = unit price × quantity`. Order creation saves the item subtotal;
+payment initiation adds the selected delivery method's `price_delta` once.
+The custom-design surcharge multiplies the item price when applied. Deltas are
+read from the database at creation time. Every selected option is saved as an
+immutable snapshot on the order item (see the order object above), and payment
+initiation charges the calculated order total. Prices and the shipping address
+are snapshotted at purchase time; delivery is snapshotted at payment initiation.
+Duplicate lines are not merged and stock is never decremented.
 
 | Status | Response |
 | --- | --- |
 | `201` | The created order object (staff get the staff shape) |
-| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, `{"delivery_method": ["Choose a delivery method."]}`, `{"delivery_method": ["This delivery method is not available."]}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 'nope' is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
+| `400` | `{"detail": "Please complete your profile before placing an order."}`, `{"detail": "Please add an address before placing an order."}`, `{"detail": "Product 'Phone X' is not available."}`, field errors under `items`, or option errors such as `{"selected_options": ["Required attributes missing: Car model."]}`, `{"selected_options": ["Choice 'nope' is not available for attribute 'car_type'."]}`. No order or snapshot rows are created |
 | `404` | Foreign `address_id` |
 
 Custom-design checkout uses `multipart/form-data`:
@@ -589,7 +591,6 @@ Custom-design checkout uses `multipart/form-data`:
 | --- | --- |
 | `items` | JSON string of submitted items |
 | `address_id` | Optional address ID |
-| `delivery_method` | Required; the code of an active delivery method |
 | `custom_design_product_ids` | JSON string array; a subset of the submitted products |
 | `custom_design_description` | Required with a selection; maximum 2000 characters |
 | `images` | 1–3 files; JPEG, PNG, or WEBP by content; maximum 5 MiB and 6000 × 6000 pixels each |
@@ -613,22 +614,27 @@ transitions in Django Admin.
 Bearer.
 
 ```json
-{"order_id": 1}
+{"order_id": 1, "delivery_method": "express"}
 ```
 
 Creates a pending payment and requests a Zibal session for an owned pending
-order. A second session cannot be started while an earlier attempt is pending;
-verify the existing attempt first.
+order. `delivery_method` is required and must be an active method from
+`GET /delivery-methods/`; its configured fee is added once to the order total
+and saved with the method snapshot before the gateway is called. A second
+session cannot be started while an earlier attempt is pending; verify the
+existing attempt first.
 
 | Status | Response |
 | --- | --- |
 | `201` | `{"detail": "Payment initiated. Redirect the customer to payment_url.", "track_id": "123456789", "payment_url": "https://gateway.zibal.ir/start/123456789", "amount": "200000"}` |
-| `400` | `{"detail": "order_id is required."}`, `{"detail": "This order has already been paid."}`, `{"detail": "Orders in status 'processing' cannot be paid."}`, or `{"detail": "A payment attempt for this order is already pending. Please verify it instead of starting another one."}` |
+| `400` | `{"order_id": ["This field is required."]}`, `{"delivery_method": ["Choose a delivery method."]}`, `{"delivery_method": ["This delivery method is not available."]}`, `{"detail": "This order has already been paid."}`, `{"detail": "Orders in status 'processing' cannot be paid."}`, or `{"detail": "A payment attempt for this order is already pending. Please verify it instead of starting another one."}` |
 | `404` | Unknown or foreign order |
 | `502` | `{"detail": "…"}` — Zibal unreachable or rejected the request; the payment attempt is stored as `failed` |
 | `401` | Unauthenticated |
 
-`amount` is a Toman string; Zibal receives Rial (× 10).
+`amount` is the final item-plus-delivery total in Toman; Zibal receives Rial
+(× 10). The customer's mobile number and national ID are always sent with the
+gateway request.
 
 ### GET /payments/callback/
 

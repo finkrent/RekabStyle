@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from notifications.services import sms
-from orders.models import Order
+from orders.models import DeliveryMethod, Order
 from payments.models import Payment
 from payments.services.zibal import RIAL_PER_TOMAN, request_payment, verify_payment
 
@@ -16,8 +16,10 @@ class PaymentError(Exception):
     """Raised when a payment cannot be initiated or verified. Message is user-facing."""
 
 
-def initiate_payment(order, callback_url):
-    """Create a pending Payment and request a payment session from Zibal."""
+def initiate_payment(order, callback_url, delivery_method):
+    """Choose delivery, lock its final price, and open a payment session."""
+    if not isinstance(delivery_method, DeliveryMethod):
+        raise PaymentError("Choose a delivery method.")
     with transaction.atomic():
         try:
             order = (
@@ -37,6 +39,36 @@ def initiate_payment(order, callback_url):
                 "Please verify it instead of starting another one."
             )
 
+        try:
+            delivery_method = DeliveryMethod.objects.select_for_update().get(
+                pk=delivery_method.pk
+            )
+        except DeliveryMethod.DoesNotExist as exc:
+            raise PaymentError("This delivery method is not available.") from exc
+        if not delivery_method.is_active:
+            raise PaymentError("This delivery method is not available.")
+
+        # Order creation stores only item totals. Once delivery is selected,
+        # recalculate from the saved item snapshots and add its fee exactly once.
+        item_total = sum(
+            (item.total_price for item in order.items.all()), 0
+        )
+        order.delivery_method = delivery_method
+        order.delivery_method_code = delivery_method.code
+        order.delivery_method_name = delivery_method.name
+        order.delivery_fee = delivery_method.price_delta
+        order.total_price = item_total + order.delivery_fee
+        order.save(
+            update_fields=[
+                "delivery_method",
+                "delivery_method_code",
+                "delivery_method_name",
+                "delivery_fee",
+                "total_price",
+                "updated_at",
+            ]
+        )
+
         payment = Payment.objects.create(order=order, amount=order.total_price)
     try:
         track_id = request_payment(
@@ -52,6 +84,7 @@ def initiate_payment(order, callback_url):
         raise
     payment.authority = track_id
     payment.save(update_fields=["authority", "updated_at"])
+    order.refresh_from_db()
     return payment
 
 

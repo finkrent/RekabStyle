@@ -81,15 +81,14 @@ def _persist_item_options(order_item, options):
         )
 
 
-def create_order(user, items, address, delivery_method, design=None):
+def create_order(user, items, address, design=None):
     """Create an order atomically.
 
     `items` is a list of {"product": <Product>, "quantity": int}.
     `address` is the Address instance to ship to; its text and postal code are
     snapshotted onto the order so later address edits do not affect it.
-    `delivery_method` is the active DeliveryMethod chosen at checkout; its
-    code, name, and fee are snapshotted onto the order and the fee is added to
-    the total once (not per item).
+    Delivery is deliberately not selected yet. The customer chooses it when
+    initiating payment; this order's total is the item subtotal until then.
 
     `design` (optional) activates the custom-design flow selected on the
     checkout page: {"product_ids": [int], "description": str,
@@ -102,10 +101,6 @@ def create_order(user, items, address, delivery_method, design=None):
     """
     if not isinstance(address, Address):
         raise OrderError("Please add an address before placing an order.")
-    if not isinstance(delivery_method, DeliveryMethod):
-        raise OrderError("Choose a delivery method.")
-    if not delivery_method.is_active:
-        raise OrderError("This delivery method is not available.")
     if not user.profile_is_complete:
         raise OrderError("Please complete your profile before placing an order.")
     if not items:
@@ -114,25 +109,10 @@ def create_order(user, items, address, delivery_method, design=None):
     design_product_ids = set(design["product_ids"]) if design else set()
 
     with transaction.atomic():
-        # Serializer validation resolves the method before the transaction;
-        # reload and lock it so deactivation or repricing cannot be missed.
-        try:
-            delivery_method = DeliveryMethod.objects.select_for_update().get(
-                pk=delivery_method.pk
-            )
-        except DeliveryMethod.DoesNotExist as exc:
-            raise OrderError("This delivery method is not available.") from exc
-        if not delivery_method.is_active:
-            raise OrderError("This delivery method is not available.")
-
         order = Order.objects.create(
             user=user,
             shipping_address=address.address,
             shipping_postal_code=address.postal_code,
-            delivery_method=delivery_method,
-            delivery_method_code=delivery_method.code,
-            delivery_method_name=delivery_method.name,
-            delivery_fee=delivery_method.price_delta,
         )
         multiplier = 1 + CUSTOM_DESIGN_SURCHARGE / Decimal("100")
         total = Decimal("0")
@@ -168,7 +148,7 @@ def create_order(user, items, address, delivery_method, design=None):
             if is_custom:
                 customized_items.append(order_item)
             total += order_item.total_price
-        order.total_price = total + order.delivery_fee
+        order.total_price = total
         order.save(update_fields=["total_price"])
 
         if design:
