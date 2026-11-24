@@ -123,8 +123,10 @@ response) must all be submitted. Do not submit delivery with this request.
 To change a pending order without creating a new one, send
 `PATCH /orders/{id}/` with the full `items` list (same shape as checkout):
 include an item to add it or change its quantity, omit it to remove it. The
-response is the updated order; only pending orders without a custom design
-can be edited.
+response is the updated order. Only pending orders without a custom design or a
+pending payment attempt can be edited. If an attempt is pending, verify or
+resolve it before changing items; the backend returns `400` and leaves the order
+unchanged.
 
 ### Custom design (multipart)
 
@@ -152,8 +154,8 @@ source of truth for prices and validation.
 
 `GET /orders/` returns paginated summaries with `id`, `order_number`, `status`,
 `total_price`, `delivery_method_name`, and `created_at`. Fetch
-`GET /orders/{id}/` for items, options, shipping, delivery, payment, and custom
-design details. Superuser list responses additionally include
+`GET /orders/{id}/` for items, options, shipping, delivery, payment status, and
+custom design details. Superuser list responses additionally include
 `customer_full_name`.
 
 ## Payments
@@ -163,14 +165,23 @@ design details. Superuser list responses additionally include
    `{ "order_id": order.id, "delivery_method": "express" }`.
    The response `amount` is the final total including delivery.
 2. Preserve `track_id` and redirect the full page to `payment_url`.
-3. Let Zibal redirect to the backend callback.
-4. Preserve the original track ID; the callback does not replace it.
-5. Confirm with `POST /payments/verify/` before displaying success.
+3. Let Zibal redirect to the backend callback; the callback does not replace
+   the original track ID.
+4. Confirm with `POST /payments/verify/` and the preserved `track_id` before
+   displaying success.
+
+If initiation reports an existing pending attempt, do not create another
+session. Verify the preserved `track_id` instead. A gateway request failure
+marks that attempt as failed and allows another initiation.
 
 The callback query is not proof of payment. Verification is server-side,
 amount-checked, and idempotent. A verified unsuccessful payment changes the
 order status to `failed`; the failed order remains visible until scheduled
 cleanup removes it after 30 days.
+
+Zibal always receives the account's mobile number and national ID as `mobile`
+and `nationalCode`. The customer must use a payment card associated with the
+same national code; Zibal can reject the payment when they do not match.
 
 ## Errors
 

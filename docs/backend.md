@@ -45,8 +45,17 @@ Orders snapshot product prices and shipping addresses at creation; the total
 at that point is the item subtotal. Delivery is selected when payment is
 initiated, and its method and fee are snapshotted then. Checkout locks product
 rows and validates prices server-side. It does not merge duplicate lines or
-decrement stock. The order list API returns compact order summaries, while the
-order detail API returns the complete item, option, delivery, and payment data.
+decrement stock. New order numbers use `YYYY-MM-DD-XXXXXXXX`, with an
+eight-character uppercase hexadecimal suffix. The order list API returns
+compact order summaries, while the order detail API returns the complete
+customer-facing item, option, and delivery data; staff detail responses also
+include customer identity and payment summaries.
+
+Order deletion is not exposed through the public API. In Django Admin,
+superusers can delete orders and their item-option snapshots; protected
+relations, including payments, can still prevent deletion. Ordinary staff
+cannot delete item-option snapshots.
+
 Custom designs are one-to-one with orders, link selected items, and store
 re-encoded Pillow images under `designs/YYYY/MM/`.
 The custom-design *intake* is feature-flagged: with
@@ -88,13 +97,20 @@ preselected option.
 
 Initiation locks the order, requires an active delivery method, snapshots its
 current fee, adds it once to the item subtotal, and rejects a second pending
-attempt. Pending-payment orders cannot have their items edited. Verification
-checks the gateway amount in Rial against the stored Toman amount multiplied by 10. Row locks make completion idempotent;
-successful payment and order status are committed together before notifications
-are attempted. If another attempt has already paid the order, an additional
-successful charge is marked `needs_reconciliation` rather than recorded as a
-second success; it remains visible in Django Admin and staff payment summaries
-for manual reconciliation or refund. No automatic refund is issued.
+attempt. Pending-payment orders cannot have their items edited. The gateway
+request always sends the customer's phone number and national ID as Zibal's
+`mobile` and `nationalCode` fields for card loading and ownership validation.
+
+Verification checks the gateway amount in Rial against the stored Toman amount
+multiplied by 10. Row locks make completion idempotent; successful payment and
+order status are committed together before notifications are attempted. If
+another attempt has paid the order or the order is otherwise closed, an
+additional successful charge is marked `needs_reconciliation` rather than
+recorded as a second success. An amount mismatch also marks the failed payment
+for reconciliation. Flagged
+attempts remain visible in Django Admin and staff payment summaries; the
+Payments admin list can filter by this flag. Reconciliation and refunds are
+manual, and no automatic refund is issued.
 
 Customer payment SMS uses Kavenegar's `verify/lookup.json` endpoint, which can
 only send templates approved in the Kavenegar panel; tokens (order number,

@@ -36,10 +36,11 @@ the WSGI server dependency.
    value to Django as `REMOTE_ADDR`; Django does not read forwarding headers
    directly. This keeps OTP throttles per customer rather than per proxy. With
    debug disabled, Django secures session, CSRF, and refresh cookies.
-7. Before accepting checkout requests, configure at least one active delivery
-   method in Django Admin under **Delivery methods**. Set its stable code, name,
-   price delta in Toman, and active status; checkout rejects inactive or unknown
-   methods.
+7. Before accepting payment-initiation requests, configure at least one active
+   delivery method in Django Admin under **Delivery methods**. Set its stable
+   code, name, price delta in Toman, and active status. Order creation does not
+   require a method, but payment initiation requires an active method and
+   rejects inactive or unknown codes.
 
 ## Verify and maintain
 
@@ -47,6 +48,13 @@ Test OTP, profile completion, order creation, payment verification, callback
 redirects, and Admin login. Keep database and `media/` backups together because
 orders reference uploaded files. Payment verification is server-side and
 idempotent; SMS failures do not roll back a successful payment.
+
+Monitor **Payments** in Django Admin with the **Needs reconciliation** filter.
+The flag identifies additional gateway-confirmed charges for already paid or
+closed orders and payments whose verified amount does not match the order.
+Review and reconcile or refund these manually; the application does not issue
+automatic refunds. Additional successful charges do not send another order-paid
+SMS.
 
 Customer payment SMS uses Kavenegar. Administrator payment SMS is sent to
 `ADMIN_PHONE_NUMBER` when it is configured; unset, it is skipped with a log

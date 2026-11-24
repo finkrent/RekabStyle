@@ -80,7 +80,7 @@ existing approved templates:
 | `rekab-order-paid-admin` (`KAVENEGAR_ORDER_PAID_ADMIN_TEMPLATE`) | `%token` = order number, `%token2` = total in Toman |
 | `rekab-custom-order-paid` (`KAVENEGAR_CUSTOM_ORDER_PAID_ADMIN_TEMPLATE`) | `%token` = order number, `%token2` = total in Toman |
 
-Lookup tokens accept only latin letters and digits, so order numbers such as
-`20260915-1A2B3C4D` are sent as `202609151A2B3C4D`; amounts are sent as whole
+Lookup tokens accept only latin letters and digits, so new order numbers such as
+`2026-09-15-1A2B3C4D` are sent as `202609151A2B3C4D`; amounts are sent as whole
 Toman. Until the templates exist in the panel, Kavenegar rejects lookups and
 the API surfaces that as an OTP `503` or a logged payment-SMS failure.

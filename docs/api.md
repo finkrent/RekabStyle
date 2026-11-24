@@ -414,8 +414,8 @@ unavailable.
 ### GET /delivery-methods/
 
 Public, unpaginated array of the active delivery choices. Each object carries
-the stable `code` (send this at checkout), the display `name`, and the
-`price_delta` in Toman:
+the stable `code` (send this as `delivery_method` when initiating payment), the
+display `name`, and the `price_delta` in Toman:
 
 ```json
 [
@@ -425,13 +425,16 @@ the stable `code` (send this at checkout), the display `name`, and the
 ```
 
 Staff configure the choices and their charges under **Delivery methods** in
-Django Admin. Deactivated methods disappear from this list and can no longer
-be submitted at checkout. The checkout total is always calculated from the
-backend configuration, never from a client-supplied amount.
+Django Admin. Order creation does not accept a delivery method. Deactivated
+methods disappear from this list and are rejected at payment initiation. The
+final order total is always calculated from the backend configuration, never
+from a client-supplied amount.
 
 ## Orders
 
-All order endpoints require Bearer authentication (`401` otherwise).
+All order endpoints require Bearer authentication (`401` otherwise). New order
+numbers use `YYYY-MM-DD-XXXXXXXX`, where the suffix is eight uppercase
+hexadecimal characters.
 
 ### GET /orders/
 
@@ -442,7 +445,7 @@ fields (no items, options, payments, shipping details, or custom design):
 ```json
 {
   "id": 10,
-  "order_number": "20260915-1A2B3C4D",
+  "order_number": "2026-09-15-1A2B3C4D",
   "status": "pending",
   "total_price": "250000",
   "delivery_method_name": "Express delivery",
@@ -461,7 +464,7 @@ the list, the detail response contains the full order object:
 ```json
 {
   "id": 10,
-  "order_number": "20260915-1A2B3C4D",
+  "order_number": "2026-09-15-1A2B3C4D",
   "status": "pending",
   "total_price": "250000",
   "payment_status": "success",
@@ -498,7 +501,8 @@ the list, the detail response contains the full order object:
 ```
 
 - `delivery_method` is the saved method code, `delivery_method_name` its
-  purchase-time name, and `delivery_fee` the charge added once to the order.
+  payment-initiation-time name, and `delivery_fee` the charge added once to the
+  order.
   All three are snapshots: renaming, repricing, or deactivating the method
   later never changes existing orders. Orders created before delivery methods
   existed report an empty code/name and a `0` fee.
@@ -623,6 +627,10 @@ Order statuses: `pending`, `paid`, `failed`, `processing`, `shipped`,
 `delivered`, `cancelled`. Only `pending` orders can be paid; staff manage later
 transitions in Django Admin.
 
+Order deletion is not exposed through this API. In Django Admin, superusers can
+delete orders and their item-option snapshots; protected relations, including
+payments, can still prevent deletion.
+
 ## Payments
 
 ### POST /payments/initiate/
@@ -649,8 +657,10 @@ existing attempt first.
 | `401` | Unauthenticated |
 
 `amount` is the final item-plus-delivery total in Toman; Zibal receives Rial
-(× 10). The customer's mobile number and national ID are always sent with the
-gateway request.
+(× 10). The customer's mobile number and national ID are always sent as Zibal's
+`mobile` and `nationalCode` fields. Zibal uses them to load the customer's cards
+and check card ownership; it can reject payment when the card's national code
+does not match the account's national ID.
 
 ### GET /payments/callback/
 
@@ -661,7 +671,7 @@ and failure callbacks trigger server-side verification against Zibal.
 | Status | Response |
 | --- | --- |
 | `400` | `{"detail": "trackId is required."}` |
-| `200` | Verified: `{"detail": "Payment verified successfully.", "status": "paid", "order_number": "20260915-1A2B3C4D"}` |
+| `200` | Verified: `{"detail": "Payment verified successfully.", "status": "paid", "order_number": "2026-09-15-1A2B3C4D"}` |
 | `200` | Failed: `{"detail": "…", "status": "failed"}` (plus `order_number` when known); when Zibal confirms failure, the payment and pending order are marked `failed` |
 
 When `FRONTEND_PAYMENT_RESULT_URL` is configured, the browser is redirected
@@ -677,7 +687,7 @@ Bearer. Lets the frontend confirm payment after returning from the gateway.
 
 | Status | Response |
 | --- | --- |
-| `200` | `{"detail": "Payment verified successfully.", "order_number": "20260915-1A2B3C4D", "order_status": "paid", "payment_status": "success"}` |
+| `200` | `{"detail": "Payment verified successfully.", "order_number": "2026-09-15-1A2B3C4D", "order_status": "paid", "payment_status": "success"}` |
 | `400` | `track_id` missing, unknown track ID, a foreign track ID (`"Payment not found."`), a gateway-reported failure, or an amount mismatch (`"Payment amount does not match the order amount."`) |
 | `502` | Zibal unreachable or returned an invalid response |
 | `401` | Unauthenticated |
@@ -687,7 +697,12 @@ the stored Toman amount × 10. Completion is idempotent — a row lock commits
 payment and order status together, a repeated call returns `200` without
 contacting Zibal again, and success SMS is sent only once. A gateway-confirmed
 failed payment or amount mismatch marks both the payment and pending order
-`failed`.
+`failed`. Amount mismatches also set `needs_reconciliation`.
+
+An additional gateway-confirmed charge for an already paid or closed order is
+flagged `needs_reconciliation`, is not recorded as another successful payment,
+and does not send another order-paid SMS. Staff can review the flag in payment
+summaries and Django Admin; reconciliation and refunds are manual.
 
 After success, the customer and the administrator receive Kavenegar SMS
 (template selection and failure handling are described in
