@@ -12,6 +12,8 @@
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated hosts |
 | `DJANGO_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CORS origins |
 | `DJANGO_CORS_TRUSTED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated CSRF trusted origins |
+| `DJANGO_TRUSTED_PROXY_IPS` | `127.0.0.1/32,::1/128` | Comma-separated direct proxy peer IPs/CIDRs trusted to supply `X-Real-IP` |
+| `PAYMENT_PENDING_TIMEOUT_SECONDS` | `1800` | Recovery timeout for payment attempts created without a gateway authority |
 | `DATABASE_NAME` | Required operationally | PostgreSQL database |
 | `DATABASE_USER` | Required operationally | PostgreSQL user |
 | `DATABASE_PASSWORD` | Required operationally | PostgreSQL password |

@@ -1,4 +1,4 @@
-﻿from urllib.parse import urlencode
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.http import HttpResponseRedirect
@@ -40,12 +40,13 @@ class VerifyPaymentRequest(serializers.Serializer):
     request=InitiatePaymentRequest,
     responses={
         201: OpenApiResponse(
-            description=(
-                "Payment session created: track_id, payment_url, amount. "
-                "Redirect the customer to payment_url."
-            )
+            description="Created: track_id, payment_url, amount, resumed=false."
+        ),
+        200: OpenApiResponse(
+            description="Recovered session: track_id, payment_url, amount, resumed=true."
         ),
         400: OpenApiResponse(description="order_id missing or order not payable."),
+        409: OpenApiResponse(description="An initiation with no gateway response is still in progress."),
         404: OpenApiResponse(description="Order not found for this user."),
         502: OpenApiResponse(description="Payment gateway error."),
     },
@@ -73,7 +74,13 @@ class InitiatePaymentView(APIView):
                 order, callback_url, serializer.validated_data["delivery_method"]
             )
         except PaymentError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            conflict = "being created" in str(exc)
+            return Response(
+                {"detail": str(exc)},
+                status=(
+                    status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST
+                ),
+            )
         except ZibalError as exc:
             return Response(
                 {"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
@@ -81,12 +88,21 @@ class InitiatePaymentView(APIView):
 
         return Response(
             {
-                "detail": "Payment initiated. Redirect the customer to payment_url.",
+                "detail": (
+                    "Payment session recovered. Redirect to payment_url."
+                    if getattr(payment, "resumed", False)
+                    else "Payment initiated. Redirect the customer to payment_url."
+                ),
                 "track_id": payment.authority,
                 "payment_url": payment_url(payment.authority),
                 "amount": payment.amount,
+                "resumed": getattr(payment, "resumed", False),
             },
-            status=status.HTTP_201_CREATED,
+            status=(
+                status.HTTP_200_OK
+                if getattr(payment, "resumed", False)
+                else status.HTTP_201_CREATED
+            ),
         )
 
 
@@ -139,8 +155,9 @@ class PaymentCallbackView(APIView):
             return self._respond(
                 request,
                 order=payment.order if payment else None,
-                paid=False,
+                paid=bool(payment and payment.status == Payment.STATUS_SUCCESS),
                 detail=str(exc),
+                needs_reconciliation=bool(payment and payment.needs_reconciliation),
             )
         except ZibalError as exc:
             payment = (
@@ -151,26 +168,48 @@ class PaymentCallbackView(APIView):
             return self._respond(
                 request,
                 order=payment.order if payment else None,
-                paid=False,
+                paid=bool(payment and payment.status == Payment.STATUS_SUCCESS),
                 detail=str(exc),
+                needs_reconciliation=bool(payment and payment.needs_reconciliation),
             )
 
         return self._respond(
-            request, order=payment.order, paid=True, detail="Payment verified successfully."
+            request,
+            order=payment.order,
+            paid=payment.status == Payment.STATUS_SUCCESS,
+            detail=(
+                "Payment verified successfully."
+                if not payment.needs_reconciliation
+                else "Payment requires reconciliation."
+            ),
+            needs_reconciliation=payment.needs_reconciliation,
         )
 
-    def _respond(self, request, order, paid, detail):
+    def _respond(self, request, order, paid, detail, needs_reconciliation=False):
         """Redirect to the frontend result page when configured, else return JSON."""
         frontend_url = settings.FRONTEND_PAYMENT_RESULT_URL
+        if needs_reconciliation:
+            response_status = "reconciliation_required"
+        elif paid:
+            response_status = "paid"
+        else:
+            response_status = "failed"
         if frontend_url:
-            query = {"status": "paid" if paid else "failed", "detail": detail}
+            query = {"status": response_status, "detail": detail}
+            if needs_reconciliation:
+                query["needs_reconciliation"] = "true"
             if order:
                 query["order_number"] = order.order_number
             return HttpResponseRedirect(f"{frontend_url}?{urlencode(query)}")
 
-        payload = {"detail": detail, "status": "paid" if paid else "failed"}
+        payload = {
+            "detail": detail,
+            "status": response_status,
+            "needs_reconciliation": needs_reconciliation,
+        }
         if order:
             payload["order_number"] = order.order_number
+            payload["order_status"] = order.status
         return Response(payload)
 
 
@@ -208,7 +247,17 @@ class PaymentVerifyView(APIView):
 
         return Response(
             {
-                "detail": "Payment verified successfully.",
+                "detail": (
+                    "Payment requires reconciliation."
+                    if payment.needs_reconciliation
+                    else "Payment verified successfully."
+                ),
+                "status": (
+                    "reconciliation_required"
+                    if payment.needs_reconciliation
+                    else payment.status
+                ),
+                "needs_reconciliation": payment.needs_reconciliation,
                 "order_number": payment.order.order_number,
                 "order_status": payment.order.status,
                 "payment_status": payment.status,

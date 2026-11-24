@@ -1,6 +1,8 @@
 ﻿"""Payment orchestration: initiation, server-side verification, order updates, SMS."""
 import logging
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -17,9 +19,11 @@ class PaymentError(Exception):
 
 
 def initiate_payment(order, callback_url, delivery_method):
-    """Choose delivery, lock its final price, and open a payment session."""
+    """Resume or create the order's single active payment session."""
     if not isinstance(delivery_method, DeliveryMethod):
         raise PaymentError("Choose a delivery method.")
+    pending_timeout = timedelta(seconds=settings.PAYMENT_PENDING_TIMEOUT_SECONDS)
+    stale_cutoff = timezone.now() - pending_timeout
     with transaction.atomic():
         try:
             order = (
@@ -33,11 +37,21 @@ def initiate_payment(order, callback_url, delivery_method):
             raise PaymentError("This order has already been paid.")
         if order.status != Order.STATUS_PENDING:
             raise PaymentError(f"Orders in status '{order.status}' cannot be paid.")
-        if order.payments.filter(status=Payment.STATUS_PENDING).exists():
-            raise PaymentError(
-                "A payment attempt for this order is already pending. "
-                "Please verify it instead of starting another one."
-            )
+        pending_payments = list(
+            order.payments.select_for_update()
+            .filter(status=Payment.STATUS_PENDING)
+            .order_by("created_at")
+        )
+        for pending_payment in pending_payments:
+            if pending_payment.authority:
+                pending_payment.resumed = True
+                return pending_payment
+            if pending_payment.created_at > stale_cutoff:
+                raise PaymentError(
+                    "A payment session is being created. Please retry shortly."
+                )
+            pending_payment.status = Payment.STATUS_FAILED
+            pending_payment.save(update_fields=["status", "updated_at"])
 
         try:
             delivery_method = DeliveryMethod.objects.select_for_update().get(
@@ -84,6 +98,7 @@ def initiate_payment(order, callback_url, delivery_method):
         raise
     payment.authority = track_id
     payment.save(update_fields=["authority", "updated_at"])
+    payment.resumed = False
     order.refresh_from_db()
     return payment
 
@@ -120,16 +135,16 @@ def verify_and_complete_payment(track_id, user=None):
         raise PaymentError(result["message"] or "Payment was not completed successfully.")
 
     if result["amount"] is None or int(result["amount"]) != int(payment.amount) * RIAL_PER_TOMAN:
-        payment, marked_failed = _mark_payment_failed(payment, result["result"])
+        payment, marked_failed = _mark_payment_failed(
+            payment, result["result"], needs_reconciliation=True
+        )
         if not marked_failed:
             return payment
-        payment.needs_reconciliation = True
-        payment.save(update_fields=["needs_reconciliation", "updated_at"])
         logger.error(
             "Payment %s amount mismatch: gateway=%s rial expected=%s toman (as %s rial)",
             payment.pk, result["amount"], payment.amount, int(payment.amount) * RIAL_PER_TOMAN,
         )
-        raise PaymentError("Payment amount does not match the order amount.")
+        return payment
 
     with transaction.atomic():
         payment = Payment.objects.select_for_update().get(pk=payment.pk)
@@ -174,17 +189,25 @@ def verify_and_complete_payment(track_id, user=None):
     return payment
 
 
-def _mark_payment_failed(payment, result_code):
-    """Mark an unsuccessful payment and its still-pending order as failed."""
+def _mark_payment_failed(payment, result_code, needs_reconciliation=False):
+    """Mark a failed attempt without overwriting a settled order or payment."""
     with transaction.atomic():
         payment = Payment.objects.select_for_update().get(pk=payment.pk)
         order = Order.objects.select_for_update().get(pk=payment.order_id)
+        payment.needs_reconciliation = payment.needs_reconciliation or needs_reconciliation
         if payment.status == Payment.STATUS_SUCCESS or order.status == Order.STATUS_PAID:
+            if needs_reconciliation:
+                payment.result_code = result_code
+                payment.save(
+                    update_fields=["result_code", "needs_reconciliation", "updated_at"]
+                )
             return payment, False
 
         payment.status = Payment.STATUS_FAILED
         payment.result_code = result_code
-        payment.save(update_fields=["status", "result_code", "updated_at"])
+        payment.save(
+            update_fields=["status", "result_code", "needs_reconciliation", "updated_at"]
+        )
         if order.status == Order.STATUS_PENDING:
             order.status = Order.STATUS_FAILED
             order.save(update_fields=["status", "updated_at"])

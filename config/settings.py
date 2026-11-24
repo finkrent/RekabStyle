@@ -61,6 +61,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    "config.middleware.TrustedProxyClientIpMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -86,6 +87,15 @@ CSRF_TRUSTED_ORIGINS = _env_list(
 )
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Only direct peers in this list may supply X-Real-IP. The reverse proxy must
+# overwrite that header from its socket's remote address; Django ignores it
+# for all other peers.
+TRUSTED_PROXY_IPS = _env_list("DJANGO_TRUSTED_PROXY_IPS", "127.0.0.1/32,::1/128")
+
+# Pending gateway sessions older than this are safe to retry. In-flight
+# initiation rows with no authority use the same timeout as crash recovery.
+PAYMENT_PENDING_TIMEOUT_SECONDS = _env_int("PAYMENT_PENDING_TIMEOUT_SECONDS", 1800)
 
 
 

@@ -26,17 +26,19 @@ the WSGI server dependency.
    uv run gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3
    ```
 
-5. Proxy HTTPS traffic to Django. Serve `/static/` from `STATIC_ROOT` and
+6. Proxy HTTPS traffic to Django. Serve `/static/` from `STATIC_ROOT` and
    `/media/` from `MEDIA_ROOT`, including `media/designs/` custom-design
    images (kept for historical orders; the custom-design intake is disabled
    by default via `CUSTOM_DESIGN_ENABLED=False`).
-6. Forward `X-Forwarded-Proto` and `X-Real-IP` from the trusted reverse proxy
-   to Gunicorn, and configure the proxy to replace the client-supplied value of
-   `X-Real-IP` with the actual remote client address. Gunicorn must expose that
-   value to Django as `REMOTE_ADDR`; Django does not read forwarding headers
-   directly. This keeps OTP throttles per customer rather than per proxy. With
-   debug disabled, Django secures session, CSRF, and refresh cookies.
-7. Before accepting payment-initiation requests, configure at least one active
+7. Set `DJANGO_TRUSTED_PROXY_IPS` to the comma-separated IPs/CIDRs of direct
+   proxy peers (default: `127.0.0.1/32,::1/128`). Configure that proxy to
+   overwrite `X-Real-IP` with the socket peer address; never append or pass
+   through a client-provided value. Django only trusts this header when
+   `REMOTE_ADDR` is one of those configured proxy peers, then sets `REMOTE_ADDR`
+   to the validated client IP. Forward `X-Forwarded-Proto` as usual. This makes
+   the OTP per-IP throttle use proxy-derived client addresses without trusting
+   spoofed headers from other peers.
+8. Before accepting payment-initiation requests, configure at least one active
    delivery method in Django Admin under **Delivery methods**. Set its stable
    code, name, price delta in Toman, and active status. Order creation does not
    require a method, but payment initiation requires an active method and

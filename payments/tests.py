@@ -1,8 +1,10 @@
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from accounts.models import Address
 from orders.models import CustomDesign, DeliveryMethod, Order
@@ -245,19 +247,85 @@ class VerifyPaymentTests(PaymentTestBase):
         mock_sms_admin.assert_not_called()
 
     @patch(VERIFY_TARGET)
-    def test_incorrect_amount_rejected(self, mock_verify):
-        self._make_payment()
-        mock_verify.return_value = self._verify_result(amount=int(self.order.total_price) * 10 + 5000)
+    def test_wrong_amount_for_already_paid_order_is_flagged_for_reconciliation(self, mock_verify):
+        first = self._make_payment(track_id="12345")
+        first.status = Payment.STATUS_SUCCESS
+        first.save(update_fields=["status"])
+        extra = self._make_payment(track_id="67890")
+        self.order.status = Order.STATUS_PAID
+        self.order.save(update_fields=["status"])
+        mock_verify.return_value = self._verify_result(
+            amount=int(extra.amount) * 10 + 5000
+        )
+
         self.client.force_login(self.user)
+        response = self.client.post(
+            VERIFY_URL, {"track_id": "67890"}, content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "reconciliation_required")
+        self.assertTrue(response.data["needs_reconciliation"])
+        extra.refresh_from_db()
+        first.refresh_from_db()
+        self.order.refresh_from_db()
+        self.assertTrue(extra.needs_reconciliation)
+        self.assertEqual(first.status, Payment.STATUS_SUCCESS)
+        self.assertEqual(self.order.status, Order.STATUS_PAID)
+
+    @patch(VERIFY_TARGET)
+    def test_verified_extra_charge_has_distinct_callback_response(self, mock_verify):
+        first = self._make_payment(track_id="12345")
+        first.status = Payment.STATUS_SUCCESS
+        first.save(update_fields=["status"])
+        extra = self._make_payment(track_id="67890")
+        self.order.status = Order.STATUS_PAID
+        self.order.save(update_fields=["status"])
+        mock_verify.return_value = self._verify_result(
+            amount=int(extra.amount) * 10
+        )
+
+        response = self.client.get(CALLBACK_URL, {"trackId": "67890", "success": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "reconciliation_required")
+        self.assertTrue(response.data["needs_reconciliation"])
+        self.assertEqual(response.data["order_status"], Order.STATUS_PAID)
+
+    @patch(VERIFY_TARGET)
+    def test_wrong_amount_for_unpaid_order_fails_and_requires_reconciliation(self, mock_verify):
+        payment = self._make_payment()
+        mock_verify.return_value = self._verify_result(
+            amount=int(payment.amount) * 10 + 5000
+        )
+        self.client.force_login(self.user)
+
         response = self.client.post(
             VERIFY_URL, {"track_id": "12345"}, content_type="application/json"
         )
-        self.assertEqual(response.status_code, 400)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "reconciliation_required")
+        self.assertTrue(response.data["needs_reconciliation"])
+        payment.refresh_from_db()
         self.order.refresh_from_db()
-        self.assertEqual(self.order.status, Order.STATUS_FAILED)
-        payment = Payment.objects.get(authority="12345")
         self.assertEqual(payment.status, Payment.STATUS_FAILED)
         self.assertTrue(payment.needs_reconciliation)
+        self.assertEqual(self.order.status, Order.STATUS_FAILED)
+
+    @patch(VERIFY_TARGET)
+    def test_wrong_amount_callback_exposes_reconciliation_status(self, mock_verify):
+        payment = self._make_payment()
+        mock_verify.return_value = self._verify_result(
+            amount=int(payment.amount) * 10 + 5000
+        )
+
+        response = self.client.get(CALLBACK_URL, {"trackId": "12345", "success": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "reconciliation_required")
+        self.assertTrue(response.data["needs_reconciliation"])
+        self.assertEqual(response.data["order_status"], Order.STATUS_FAILED)
 
     @patch(VERIFY_TARGET)
     def test_failed_payment_rejected(self, mock_verify):
@@ -359,18 +427,61 @@ class VerifyPaymentTests(PaymentTestBase):
         self.assertEqual(self.order.status, Order.STATUS_PENDING)
 
 
-class PaymentRaceRegressionTests(PaymentTestBase):
     @patch(REQUEST_TARGET)
-    def test_an_active_attempt_prevents_another_payment_session(self, mock_request):
-        self._make_payment()
-
+    def test_an_active_attempt_returns_the_existing_payment_session(self, mock_request):
+        active = self._make_payment(track_id="12345")
+        original_amount = active.amount
+        alternate_method = DeliveryMethod.objects.create(
+            code="express", name="Express delivery", price_delta=5000
+        )
         self.client.force_login(self.user)
+
+        response = self.client.post(
+            INITIATE_URL,
+            self._initiate_payload(delivery_method=alternate_method.code),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["track_id"], active.authority)
+        self.assertEqual(response.data["amount"], original_amount)
+        self.assertTrue(response.data["resumed"])
+        self.order.refresh_from_db()
+        self.assertNotEqual(self.order.delivery_method, alternate_method)
+        self.assertEqual(self.order.total_price, original_amount)
+        mock_request.assert_not_called()
+
+    @override_settings(PAYMENT_PENDING_TIMEOUT_SECONDS=60)
+    @patch(REQUEST_TARGET, return_value="67890")
+    def test_stale_untracked_attempt_is_closed_and_can_be_retried(self, mock_request):
+        stale = self._make_payment(track_id="")
+        Payment.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(seconds=61)
+        )
+        self.client.force_login(self.user)
+
         response = self.client.post(
             INITIATE_URL, self._initiate_payload(), content_type="application/json"
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(Payment.objects.filter(order=self.order).count(), 1)
+        self.assertEqual(response.status_code, 201)
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, Payment.STATUS_FAILED)
+        self.assertEqual(response.data["track_id"], "67890")
+        mock_request.assert_called_once()
+
+    @override_settings(PAYMENT_PENDING_TIMEOUT_SECONDS=60)
+    @patch(REQUEST_TARGET)
+    def test_recent_untracked_attempt_is_not_replaced(self, mock_request):
+        self._make_payment(track_id="")
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("being created", response.data["detail"].lower())
         mock_request.assert_not_called()
 
     @patch(REQUEST_TARGET, return_value="67890")
