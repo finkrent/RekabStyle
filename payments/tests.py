@@ -96,6 +96,43 @@ class InitiatePaymentTests(PaymentTestBase):
         mock_request.assert_called_once()
         self.assertEqual(mock_request.call_args.kwargs["amount"], self.order.total_price)
 
+    @patch(REQUEST_TARGET, return_value="67890")
+    def test_cannot_initiate_payment_for_an_empty_order(self, mock_request):
+        self.order.items.all().delete()
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one item", response.data["detail"])
+        self.assertFalse(Payment.objects.filter(order=self.order).exists())
+        mock_request.assert_not_called()
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PENDING)
+
+    @patch(REQUEST_TARGET)
+    def test_empty_order_cannot_resume_a_pending_payment(self, mock_request):
+        active = self._make_payment(track_id="12345")
+        self.order.items.all().delete()
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            INITIATE_URL, self._initiate_payload(), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one item", response.data["detail"])
+        self.assertNotIn("track_id", response.data)
+        mock_request.assert_not_called()
+        active.refresh_from_db()
+        self.assertEqual(active.status, Payment.STATUS_PENDING)
+        self.assertEqual(active.authority, "12345")
+        self.assertEqual(Payment.objects.filter(order=self.order).count(), 1)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.STATUS_PENDING)
+
     def test_initiate_payment_requires_authentication(self):
         response = self.client.post(
             INITIATE_URL, self._initiate_payload(), content_type="application/json"

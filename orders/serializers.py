@@ -407,11 +407,12 @@ class OrderItemInputSerializer(serializers.Serializer):
         return attrs
 
 
-def _parse_items(value):
+def _parse_items(value, *, allow_empty=False):
     """Decode and validate a submitted `items` payload.
 
     JSON bodies send a real list; multipart bodies send a JSON string.
     Returns the validated [{"product": <Product>, "quantity": int}, ...] list.
+    Empty lists are accepted only when explicitly enabled for order updates.
     """
     if isinstance(value, str):
         try:
@@ -420,7 +421,7 @@ def _parse_items(value):
             raise serializers.ValidationError(
                 "items must be a JSON array of {product_id, quantity} objects."
             )
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list) or (not value and not allow_empty):
         raise serializers.ValidationError("An order must contain at least one item.")
     inner = OrderItemInputSerializer(data=value, many=True)
     inner.is_valid(raise_exception=True)
@@ -550,13 +551,14 @@ class OrderUpdateSerializer(serializers.Serializer):
     """Replacement item list for PATCH /api/v1/orders/{id}/ (cart-sync).
 
     The submitted list becomes the order's entire item set: include an
-    item to add it or change its quantity, omit it to remove it. Works
-    with both `application/json` and multipart bodies (items arrives as
-    a JSON string in multipart, same as OrderCreateSerializer).
+    item to add it or change its quantity, omit it to remove it, or submit
+    an empty list to remove every item. Works with both `application/json`
+    and multipart bodies (items arrives as a JSON string in multipart, same
+    as OrderCreateSerializer).
     """
 
     items = serializers.JSONField()
 
     def validate_items(self, value):
-        return _parse_items(value)
+        return _parse_items(value, allow_empty=True)
 

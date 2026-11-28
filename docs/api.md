@@ -57,7 +57,7 @@ registration failures add a machine-readable `code` (`cooldown`, `rate_limited`,
 | `401` | Missing, expired, or invalid access/refresh token |
 | `403` | Disabled account or missing sign-up session |
 | `404` | Missing or foreign resource |
-| `409` | Duplicate phone or national ID |
+| `409` | Duplicate phone or national ID, or payment initiation already in progress |
 | `429` | OTP cooldown, hourly limit, or attempt limit |
 | `502` | Zibal gateway failure |
 | `503` | OTP SMS failure |
@@ -532,11 +532,18 @@ the list, the detail response contains the full order object:
 Cart-sync replacement: `{"items": [...]}` (same item shape as
 `POST /orders/`, including optional `subcategory_id` and
 `selected_options`) replaces the order's entire item list — include an
-item to add it or change its quantity, omit it to remove it. Only
-`pending` orders without a custom design or a pending payment attempt can be
-edited; `200` returns the updated order and `400` reports the reason, in which
-case the order is left unchanged. The order's saved `delivery_fee` is kept
-as-is when the total is recalculated.
+item to add it or change its quantity, omit it to remove it. An empty list
+(`{"items": []}`) removes every item without deleting the order. The response
+keeps the same order ID, order number, and `pending` status, and returns
+`"items": []`; another PATCH can add products to that same order later.
+
+Only `pending` orders without a custom design or a pending payment attempt can
+be edited, including when the submitted list is empty; `200` returns the
+updated order and `400` reports the reason, in which case the order is left
+unchanged. The saved `delivery_fee` and delivery-method snapshots are kept
+as-is. Totals are always recalculated as item totals plus that fee, so an empty
+order's `total_price` equals its saved `delivery_fee` (zero when no fee was
+selected). `PUT /orders/{id}/` is not supported and returns `405`.
 
 ### POST /orders/
 
@@ -569,6 +576,9 @@ payment is initiated.
 | `items[].subcategory_id` | Optional reference subcategory (must be one the product belongs to). Options can only be submitted for it; when omitted it is resolved safely — the product's only subcategory, or the only one that defines active attributes |
 | `items[].selected_options` | Optional list of `{"option_key": "<attribute key from the product detail options>", "choice_key": "<choice key>"}` for `select` attributes, or `{"option_key": "<attribute key>", "value": "<text>"}` for `text` attributes (non-empty, at most 200 characters). Attributes and choices are addressed by their stable keys, never ids |
 | `address_id` | Optional; defaults to the newest address; a foreign address returns `404` |
+
+Unlike PATCH replacement, order creation does not accept an empty `items` list:
+`POST /orders/` with `{"items": []}` returns `400` and creates no order.
 
 Option validation is fully generic (nothing is hardcoded per attribute
 key): every active required attribute of the reference subcategory must be
@@ -624,8 +634,8 @@ decoded, and re-encoded through Pillow before storage under
 returns `400` with `{"detail": "…"}` and creates no order.
 
 Order statuses: `pending`, `paid`, `failed`, `processing`, `shipped`,
-`delivered`, `cancelled`. Only `pending` orders can be paid; staff manage later
-transitions in Django Admin.
+`delivered`, `cancelled`. Only `pending` orders containing at least one item can
+be paid; staff manage later transitions in Django Admin.
 
 Order deletion is not exposed through this API. In Django Admin, superusers can
 delete orders and their item-option snapshots; protected relations, including
@@ -642,18 +652,31 @@ Bearer.
 ```
 
 Creates a pending payment and requests a Zibal session for an owned pending
-order. `delivery_method` is required and must be an active method from
-`GET /delivery-methods/`; its configured fee is added once to the order total
-and saved with the method snapshot before the gateway is called. A second
-session cannot be started while an earlier attempt is pending; verify the
-existing attempt first.
+order that contains at least one item. `delivery_method` is required and must
+be an active method from `GET /delivery-methods/`; its configured fee is added
+once to the order total and saved with the method snapshot before the gateway
+is called.
+
+An empty order returns `400` before a payment is created or an existing session
+is recovered; no gateway request is made and any existing pending payment is
+left unchanged. This guard also applies when the order has a non-zero saved
+delivery fee.
+
+For a non-empty order, an existing authorized pending attempt is recovered:
+the response is `200` with the original `track_id` and amount, and with
+`"resumed": true`; delivery and the amount are not recalculated and Zibal is
+not called again. A new session returns `201` with `"resumed": false`. A recent
+pending row without a track ID means initiation is still in progress and
+returns `409`; a stale untracked row is marked failed and retried.
 
 | Status | Response |
 | --- | --- |
-| `201` | `{"detail": "Payment initiated. Redirect the customer to payment_url.", "track_id": "123456789", "payment_url": "https://gateway.zibal.ir/start/123456789", "amount": "200000"}` |
-| `400` | `{"order_id": ["This field is required."]}`, `{"delivery_method": ["Choose a delivery method."]}`, `{"delivery_method": ["This delivery method is not available."]}`, `{"detail": "This order has already been paid."}`, `{"detail": "Orders in status 'processing' cannot be paid."}`, or `{"detail": "A payment attempt for this order is already pending. Please verify it instead of starting another one."}` |
+| `200` | Recovered: `{"detail": "Payment session recovered. Redirect to payment_url.", "track_id": "123456789", "payment_url": "https://gateway.zibal.ir/start/123456789", "amount": "200000", "resumed": true}` |
+| `201` | Created: `{"detail": "Payment initiated. Redirect the customer to payment_url.", "track_id": "123456789", "payment_url": "https://gateway.zibal.ir/start/123456789", "amount": "200000", "resumed": false}` |
+| `400` | `{"order_id": ["This field is required."]}`, `{"delivery_method": ["Choose a delivery method."]}`, `{"delivery_method": ["This delivery method is not available."]}`, `{"detail": "An order must contain at least one item."}`, `{"detail": "This order has already been paid."}`, or `{"detail": "Orders in status 'processing' cannot be paid."}` |
+| `409` | `{"detail": "A payment session is being created. Please retry shortly."}` |
 | `404` | Unknown or foreign order |
-| `502` | `{"detail": "…"}` — Zibal unreachable or rejected the request; the payment attempt is stored as `failed` |
+| `502` | `{"detail": "…"}` — Zibal unreachable or rejected the request; the new payment attempt is stored as `failed` |
 | `401` | Unauthenticated |
 
 `amount` is the final item-plus-delivery total in Toman; Zibal receives Rial

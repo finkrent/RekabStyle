@@ -37,6 +37,8 @@ def initiate_payment(order, callback_url, delivery_method):
             raise PaymentError("This order has already been paid.")
         if order.status != Order.STATUS_PENDING:
             raise PaymentError(f"Orders in status '{order.status}' cannot be paid.")
+        if not order.items.exists():
+            raise PaymentError("An order must contain at least one item.")
         pending_payments = list(
             order.payments.select_for_update()
             .filter(status=Payment.STATUS_PENDING)

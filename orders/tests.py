@@ -88,6 +88,18 @@ class OrderCreateTests(OrderTestBase):
         self.assertEqual(order.status, Order.STATUS_PENDING)
         self.assertEqual(order.shipping_address, "Tehran, Vanak St. 1")
 
+    def test_empty_items_rejected(self):
+        user, address = self._make_complete_user()
+        self.client.force_login(user)
+        response = self.client.post(
+            ORDER_LIST_URL,
+            {"items": [], "address_id": address.pk},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one item", response.data["items"][0])
+        self.assertFalse(Order.objects.filter(user=user).exists())
+
     def test_order_uses_latest_address_by_default(self):
         user, address = self._make_complete_user()
         newest = Address.objects.create(
@@ -762,8 +774,10 @@ class OrderUpdateTests(OrderTestBase):
         order.status = Order.STATUS_PAID
         order.save()
         self.client.force_login(user)
-        response = self._patch(order, [{"product_id": self.product.pk, "quantity": 5}])
-        self.assertEqual(response.status_code, 400)
+        for items in ([{"product_id": self.product.pk, "quantity": 5}], []):
+            with self.subTest(items=items):
+                response = self._patch(order, items)
+                self.assertEqual(response.status_code, 400)
         order.refresh_from_db()
         self.assertEqual(order.items.get().quantity, 2)
 
@@ -773,8 +787,12 @@ class OrderUpdateTests(OrderTestBase):
         design = CustomDesign.objects.create(order=order, description="Print my logo")
         design.order_items.set(order.items.all())
         self.client.force_login(user)
-        response = self._patch(order, [{"product_id": self.product.pk, "quantity": 1}])
-        self.assertEqual(response.status_code, 400)
+        for items in ([{"product_id": self.product.pk, "quantity": 1}], []):
+            with self.subTest(items=items):
+                response = self._patch(order, items)
+                self.assertEqual(response.status_code, 400)
+        order.refresh_from_db()
+        self.assertEqual(order.items.get().quantity, 2)
 
     def test_other_users_order_returns_404(self):
         user, address = self._make_complete_user()
@@ -792,6 +810,21 @@ class OrderUpdateTests(OrderTestBase):
         response = self._patch(order, [{"product_id": self.product.pk, "quantity": 1}])
         self.assertEqual(response.status_code, 401)
 
+    def test_put_is_not_allowed(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+        self.client.force_login(user)
+        for items in ([{"product_id": self.product.pk, "quantity": 1}], []):
+            with self.subTest(items=items):
+                response = self.client.put(
+                    self._url(order),
+                    {"items": items},
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 405)
+        order.refresh_from_db()
+        self.assertEqual(order.items.get().quantity, 2)
+
     def test_inactive_product_rejected_and_order_unchanged(self):
         user, address = self._make_complete_user()
         order = self._create_order(user, address, quantity=2)
@@ -804,15 +837,66 @@ class OrderUpdateTests(OrderTestBase):
         self.assertEqual(order.items.count(), 1)
         self.assertEqual(order.total_price, 200000)
 
-    def test_empty_items_rejected(self):
+    def test_empty_items_clear_the_pending_order_for_reuse(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+        order_number = order.order_number
+        self.client.force_login(user)
+        response = self._patch(order, [])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["id"], order.pk)
+        self.assertEqual(response.data["order_number"], order_number)
+        self.assertEqual(response.data["status"], Order.STATUS_PENDING)
+        self.assertEqual(response.data["items"], [])
+        self.assertEqual(response.data["total_price"], "0")
+        order.refresh_from_db()
+        self.assertEqual(order.order_number, order_number)
+        self.assertEqual(order.status, Order.STATUS_PENDING)
+        self.assertEqual(order.items.count(), 0)
+        self.assertEqual(order.total_price, 0)
+        self.assertEqual(Order.objects.filter(pk=order.pk).count(), 1)
+
+    def test_an_emptied_order_can_be_refilled_later(self):
         user, address = self._make_complete_user()
         order = self._create_order(user, address, quantity=2)
         self.client.force_login(user)
-        response = self._patch(order, [])
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("items", response.data)
+        empty_response = self._patch(order, [])
+        self.assertEqual(empty_response.status_code, 200)
+
+        response = self._patch(order, [{"product_id": self.product.pk, "quantity": 3}])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["id"], order.pk)
+        self.assertEqual(response.data["status"], Order.STATUS_PENDING)
+        self.assertEqual(response.data["total_price"], "300000")
         order.refresh_from_db()
         self.assertEqual(order.items.count(), 1)
+        self.assertEqual(order.items.get().quantity, 3)
+
+    def test_empty_order_retains_the_saved_delivery_fee(self):
+        method = DeliveryMethod.objects.create(
+            code="express", name="Express delivery", price_delta=50000
+        )
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+        order.delivery_method = method
+        order.delivery_method_code = method.code
+        order.delivery_method_name = method.name
+        order.delivery_fee = method.price_delta
+        order.total_price += order.delivery_fee
+        order.save()
+        self.client.force_login(user)
+
+        response = self._patch(order, [])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["delivery_fee"], "50000")
+        self.assertEqual(response.data["total_price"], "50000")
+        self.assertEqual(response.data["items"], [])
+        order.refresh_from_db()
+        self.assertEqual(order.items.count(), 0)
+        self.assertEqual(order.delivery_method, method)
+        self.assertEqual(order.total_price, 50000)
 
     def test_a_pending_payment_attempt_locks_the_order_items(self):
         user, address = self._make_complete_user()
@@ -820,10 +904,12 @@ class OrderUpdateTests(OrderTestBase):
         Payment.objects.create(order=order, amount=order.total_price)
 
         self.client.force_login(user)
-        response = self._patch(order, [{"product_id": self.product.pk, "quantity": 1}])
+        for items in ([{"product_id": self.product.pk, "quantity": 1}], []):
+            with self.subTest(items=items):
+                response = self._patch(order, items)
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("payment", response.data["detail"].lower())
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("payment", response.data["detail"].lower())
         order.refresh_from_db()
         self.assertEqual(order.items.get().quantity, 2)
         self.assertEqual(order.total_price, 200000)
@@ -840,6 +926,17 @@ class OrderUpdateTests(OrderTestBase):
 
         order.refresh_from_db()
         self.assertEqual(order.items.get().quantity, 2)
+
+    def test_a_non_list_empty_value_cannot_clear_an_order_in_the_service(self):
+        user, address = self._make_complete_user()
+        order = self._create_order(user, address, quantity=2)
+
+        with self.assertRaisesMessage(Exception, "An order must contain at least one item."):
+            update_order_items(order, None)
+
+        order.refresh_from_db()
+        self.assertEqual(order.items.get().quantity, 2)
+        self.assertEqual(order.total_price, 200000)
 
     def test_invalid_items_json_rejected(self):
         user, address = self._make_complete_user()

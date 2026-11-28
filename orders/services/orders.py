@@ -175,17 +175,18 @@ def update_order_items(order, items):
     `items` has the same shape as create_order's: a list of
     {"product": <Product>, "quantity": int}. The order's items become
     exactly this list - including a product adds it, omitting one removes
-    it - and the total is recomputed with fresh price snapshots (the
-    purchase snapshot only freezes at checkout). The delivery fee saved on
-    the order is kept as-is, even if the method was repriced or deactivated
-    since checkout.
+    it, and an empty list removes all items. The total is recomputed with
+    fresh price snapshots (the purchase snapshot only freezes at checkout).
+    The delivery fee saved on the order is kept as-is, even if the method
+    was repriced or deactivated since checkout.
 
     Raises OrderError when the order is not pending, already carries a
-    custom design, has no items, or references an unavailable product.
+    custom design, has a pending payment, or references an unavailable product.
     """
     if order.status != Order.STATUS_PENDING:
         raise OrderError("Only pending orders can be edited.")
-    if not items:
+    if not items and not isinstance(items, list):
+        # Only an actual empty list requests a clear when bypassing serializers.
         raise OrderError("An order must contain at least one item.")
     # OneToOne reverse access raises RelatedObjectDoesNotExist (an
     # AttributeError subclass), so hasattr is False exactly when no

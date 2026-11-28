@@ -139,11 +139,13 @@ class OrderDetailView(generics.RetrieveUpdateAPIView):
 
     Users see only their own orders; staff see all. PATCH replaces the
     order's items with the submitted list: include an item to add it or
-    change its quantity, omit it to remove it. Only pending orders without
-    a custom design can be edited.
+    change its quantity, omit it to remove it, or submit an empty list to
+    remove every item. Only pending orders without a custom design or a
+    pending payment attempt can be edited.
     """
 
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
+    http_method_names = ["get", "patch", "head", "options"]
 
     def get_queryset(self):
         queryset = Order.objects.prefetch_related(
@@ -154,7 +156,7 @@ class OrderDetailView(generics.RetrieveUpdateAPIView):
         return queryset.filter(user=self.request.user)
 
     def get_serializer_class(self):
-        if self.request.method in ("PUT", "PATCH"):
+        if self.request.method == "PATCH":
             return OrderUpdateSerializer
         return AdminOrderSerializer if self.request.user.is_staff else OrderSerializer
 
